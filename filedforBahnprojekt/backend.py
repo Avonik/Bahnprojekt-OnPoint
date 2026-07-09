@@ -22,8 +22,30 @@ try:
 except ImportError:
     load_dotenv = None
 
-if load_dotenv:
-    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
+def load_local_env(path):
+    if load_dotenv:
+        load_dotenv(path)
+        return
+
+    if not os.path.exists(path):
+        return
+
+    with open(path, encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+load_local_env(os.path.join(os.path.dirname(__file__), ".env"))
 
 app = Flask(__name__)
 CORS(app)  # Enables CORS to allow cross-origin requestsp

@@ -17,8 +17,30 @@ except ImportError:
 PROJECT_DIR = Path(__file__).resolve().parent
 NODE_BOARD_SCRIPT = PROJECT_DIR / "my-app" / "dbweb_station_board.mjs"
 
-if load_dotenv:
-    load_dotenv(PROJECT_DIR / ".env")
+
+def load_local_env(path):
+    if load_dotenv:
+        load_dotenv(path)
+        return
+
+    path = Path(path)
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_local_env(PROJECT_DIR / ".env")
 
 DEFAULT_STATIONS = [
     "Braunschweig Hbf",
