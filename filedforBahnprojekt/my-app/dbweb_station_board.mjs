@@ -16,7 +16,9 @@ if (!stationQuery) {
 
 const duration = Number.parseInt(durationArg, 10);
 const results = Number.parseInt(resultsArg, 10);
-const client = createClient(dbwebProfile, 'BahnProjekt station board scraper', {enrichStations: true});
+const userAgent = process.env.DBWEB_USER_AGENT ||
+	'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const client = createClient(dbwebProfile, userAgent, {enrichStations: true});
 
 const findStation = async (query) => {
 	const locations = await client.locations(query, {

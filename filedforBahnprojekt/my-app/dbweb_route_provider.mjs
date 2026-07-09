@@ -9,11 +9,13 @@ if (!fromQuery || !toQuery || !departureIso) {
 }
 
 const includeLongDistance = includeLongDistanceArg !== 'false';
+const userAgent = process.env.DBWEB_USER_AGENT ||
+	'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const productgattungen = includeLongDistance
 	? ['ICE', 'EC_IC', 'IR', 'REGIONAL', 'SBAHN', 'BUS', 'SCHIFF', 'UBAHN', 'TRAM', 'ANRUFPFLICHTIG']
 	: ['REGIONAL', 'SBAHN', 'BUS', 'SCHIFF', 'UBAHN', 'TRAM', 'ANRUFPFLICHTIG'];
 
-const client = createClient(dbwebProfile, 'BahnProjekt route provider');
+const client = createClient(dbwebProfile, userAgent);
 
 const formatTrainDisplayName = (vehicle) => {
 	const label = vehicle.mittelText || vehicle.kurzText || vehicle.langText || vehicle.name || vehicle.nummer || vehicle.linienNummer;
@@ -80,9 +82,9 @@ const response = await fetch('https://int.bahn.de/web/api/angebote/fahrplan', {
 	method: 'POST',
 	headers: {
 		accept: 'application/json',
-		'accept-language': 'en',
+		'accept-language': 'de-DE,de;q=0.9,en;q=0.8',
 		'content-type': 'application/json',
-		'user-agent': 'BahnProjekt route provider',
+		'user-agent': userAgent,
 	},
 	body: JSON.stringify(body),
 });
