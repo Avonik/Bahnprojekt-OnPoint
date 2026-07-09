@@ -1,4 +1,5 @@
 import {createClient} from 'db-vendo-client';
+import {profile as dbProfile} from 'db-vendo-client/p/db/index.js';
 import {profile as dbwebProfile} from 'db-vendo-client/p/dbweb/index.js';
 
 const [
@@ -18,7 +19,10 @@ const duration = Number.parseInt(durationArg, 10);
 const results = Number.parseInt(resultsArg, 10);
 const userAgent = process.env.DBWEB_USER_AGENT ||
 	'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const client = createClient(dbwebProfile, userAgent, {enrichStations: true});
+const stationBoardProfile = (process.env.STATION_BOARD_PROFILE || 'db').toLowerCase() === 'dbweb'
+	? dbwebProfile
+	: dbProfile;
+const client = createClient(stationBoardProfile, userAgent, {enrichStations: true});
 
 const findStation = async (query) => {
 	const locations = await client.locations(query, {
