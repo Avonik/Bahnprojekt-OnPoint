@@ -1,5 +1,6 @@
 import {createClient} from 'db-vendo-client';
 import {profile as dbwebProfile} from 'db-vendo-client/p/dbweb/index.js';
+import {readSimplifiedStations} from 'db-hafas-stations';
 
 const [fromQuery, toQuery, departureIso, includeLongDistanceArg] = process.argv.slice(2);
 
@@ -16,6 +17,33 @@ const productgattungen = includeLongDistance
 	: ['REGIONAL', 'SBAHN', 'BUS', 'SCHIFF', 'UBAHN', 'TRAM', 'ANRUFPFLICHTIG'];
 
 const client = createClient(dbwebProfile, userAgent);
+
+const normalizeStationName = (value) => String(value || '')
+	.toLowerCase()
+	.normalize('NFD')
+	.replace(/[\u0300-\u036f]/g, '')
+	.replace(/\u00df/g, 'ss')
+	.replace(/[^a-z0-9]+/g, ' ')
+	.trim();
+
+const findLocalStation = async (query) => {
+	const normalizedQuery = normalizeStationName(query);
+	let bestStation = null;
+
+	for await (const station of readSimplifiedStations()) {
+		const normalizedName = normalizeStationName(station.name);
+
+		if (normalizedName === normalizedQuery) {
+			return station;
+		}
+
+		if (!bestStation && normalizedName.includes(normalizedQuery)) {
+			bestStation = station;
+		}
+	}
+
+	return bestStation;
+};
 
 const formatTrainDisplayName = (vehicle) => {
 	const label = vehicle.mittelText || vehicle.kurzText || vehicle.langText || vehicle.name || vehicle.nummer || vehicle.linienNummer;
@@ -37,6 +65,11 @@ const formatTrainDisplayName = (vehicle) => {
 };
 
 const findStation = async (query) => {
+	const localStation = await findLocalStation(query);
+	if (localStation) {
+		return localStation;
+	}
+
 	const locations = await client.locations(query, {
 		results: 1,
 		stops: true,
