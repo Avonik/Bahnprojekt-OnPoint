@@ -1,0 +1,12 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">OnPoint logo</title>
+  <desc id="desc">A punctual route mark with a rail line and arrival point.</desc>
+  <rect x="14" y="14" width="132" height="132" rx="28" fill="#0F172A"/>
+  <path d="M42 108C58 77 79 62 118 51" stroke="#67E8F9" stroke-width="10" stroke-linecap="round"/>
+  <path d="M44 109C65 101 86 96 113 95" stroke="#FBBF24" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="118" cy="51" r="15" fill="#FBBF24"/>
+  <circle cx="118" cy="51" r="6" fill="#0F172A"/>
+  <path d="M50 49H84" stroke="#E2E8F0" stroke-width="9" stroke-linecap="round"/>
+  <path d="M50 68H72" stroke="#E2E8F0" stroke-width="9" stroke-linecap="round"/>
+  <rect x="14" y="14" width="132" height="132" rx="28" stroke="#334155" stroke-width="4"/>
+</svg>
