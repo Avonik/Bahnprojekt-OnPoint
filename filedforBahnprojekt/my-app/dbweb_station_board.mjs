@@ -1,6 +1,7 @@
 import {createClient} from 'db-vendo-client';
 import {profile as dbProfile} from 'db-vendo-client/p/db/index.js';
 import {profile as dbwebProfile} from 'db-vendo-client/p/dbweb/index.js';
+import {readSimplifiedStations} from 'db-hafas-stations';
 
 const [
 	stationQuery,
@@ -22,9 +23,41 @@ const userAgent = process.env.DBWEB_USER_AGENT ||
 const stationBoardProfile = (process.env.STATION_BOARD_PROFILE || 'db').toLowerCase() === 'dbweb'
 	? dbwebProfile
 	: dbProfile;
-const client = createClient(stationBoardProfile, userAgent, {enrichStations: true});
+const client = createClient(stationBoardProfile, userAgent, {enrichStations: false});
+
+const normalizeStationName = (value) => String(value || '')
+	.toLowerCase()
+	.normalize('NFD')
+	.replace(/[\u0300-\u036f]/g, '')
+	.replace(/ß/g, 'ss')
+	.replace(/[^a-z0-9]+/g, ' ')
+	.trim();
+
+const findLocalStation = async (query) => {
+	const normalizedQuery = normalizeStationName(query);
+	let bestStation = null;
+
+	for await (const station of readSimplifiedStations()) {
+		const normalizedName = normalizeStationName(station.name);
+
+		if (normalizedName === normalizedQuery) {
+			return station;
+		}
+
+		if (!bestStation && normalizedName.includes(normalizedQuery)) {
+			bestStation = station;
+		}
+	}
+
+	return bestStation;
+};
 
 const findStation = async (query) => {
+	const localStation = await findLocalStation(query);
+	if (localStation) {
+		return localStation;
+	}
+
 	const locations = await client.locations(query, {
 		results: 1,
 		stops: true,
