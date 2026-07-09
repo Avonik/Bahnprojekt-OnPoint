@@ -3,6 +3,29 @@ import {profile as dbnavProfile} from 'db-vendo-client/p/dbnav/index.js';
 import {profile as dbwebProfile} from 'db-vendo-client/p/dbweb/index.js';
 import {readSimplifiedStations} from 'db-hafas-stations';
 
+const formatProviderError = (error) => {
+	const status = error?.response?.status;
+	const statusText = error?.response?.statusText;
+	const url = error?.url || error?.response?.url;
+	const message = error?.message || String(error);
+	const details = [
+		status ? `HTTP ${status}` : null,
+		statusText && statusText !== message ? statusText : null,
+		message,
+		url ? `at ${url}` : null,
+	].filter(Boolean);
+
+	return details.join(' ');
+};
+
+const exitWithProviderError = (error) => {
+	console.error(formatProviderError(error));
+	process.exit(1);
+};
+
+process.on('uncaughtException', exitWithProviderError);
+process.on('unhandledRejection', exitWithProviderError);
+
 const [fromQuery, toQuery, departureIso, includeLongDistanceArg, profileArg = 'dbweb'] = process.argv.slice(2);
 
 if (!fromQuery || !toQuery || !departureIso) {
@@ -34,6 +57,17 @@ const productgattungen = includeLongDistance
 
 const client = createClient(selectedProfile, userAgent);
 
+const repairTextEncoding = (value) => {
+	const text = String(value || '');
+
+	if (!/[\u00c2\u00c3]/.test(text)) {
+		return text;
+	}
+
+	const repaired = Buffer.from(text, 'latin1').toString('utf8');
+	return repaired || text;
+};
+
 const normalizeStationName = (value) => String(value || '')
 	.toLowerCase()
 	.normalize('NFD')
@@ -43,7 +77,8 @@ const normalizeStationName = (value) => String(value || '')
 	.trim();
 
 const findLocalStation = async (query) => {
-	const normalizedQuery = normalizeStationName(query);
+	const repairedQuery = repairTextEncoding(query);
+	const normalizedQuery = normalizeStationName(repairedQuery);
 	let bestStation = null;
 
 	for await (const station of readSimplifiedStations()) {
@@ -81,12 +116,13 @@ const formatTrainDisplayName = (vehicle) => {
 };
 
 const findStation = async (query) => {
-	const localStation = await findLocalStation(query);
+	const repairedQuery = repairTextEncoding(query);
+	const localStation = await findLocalStation(repairedQuery);
 	if (localStation) {
 		return localStation;
 	}
 
-	const locations = await client.locations(query, {
+	const locations = await client.locations(repairedQuery, {
 		results: 1,
 		stops: true,
 		addresses: false,

@@ -97,11 +97,25 @@ def submit():
     return jsonify({"journeys": result})  # Returns a JSON response
 
 
+def repair_text_encoding(value):
+    if not isinstance(value, str) or not any(marker in value for marker in ("Ã", "Â")):
+        return value
+
+    try:
+        repaired = value.encode("latin1").decode("utf-8")
+    except UnicodeError:
+        return value
+
+    return repaired if repaired else value
+
+
 def run_analysis(data):
     time_input = data['time']
     sumTrains = 0
 
     time_obj = datetime.datetime.strptime(time_input, '%Y-%m-%dT%H:%M')
+    starting_location = repair_text_encoding(data['starting_location'])
+    end_location = repair_text_encoding(data['end_location'])
 
     only_regional = data.get("only_regionalverkehr", False)
     if(only_regional):
@@ -118,8 +132,8 @@ def run_analysis(data):
     fallback_cache = {}
 
     journeys = fetch_live_journeys(
-        data['starting_location'],
-        data['end_location'],
+        starting_location,
+        end_location,
         time_obj,
         includeThem
     )
@@ -177,7 +191,7 @@ def run_analysis(data):
                 )
                 fallback_route = find_fallback_route(
                     origin_station,
-                    data['end_location'],
+                    end_location,
                     fallback_start_time,
                     final_arrival_time,
                     includeThem,
