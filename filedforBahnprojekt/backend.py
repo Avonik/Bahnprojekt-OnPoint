@@ -54,6 +54,15 @@ ROUTING_PROVIDER = os.getenv("ROUTING_PROVIDER", "auto").lower()
 TRANSPORT_REST_BASE_URL = os.getenv("TRANSPORT_REST_BASE_URL", "https://v6.db.transport.rest")
 NODE_EXECUTABLE = os.getenv("NODE_EXECUTABLE", "node")
 DBWEB_ROUTE_PROVIDER_SCRIPT = os.path.join(os.path.dirname(__file__), "my-app", "dbweb_route_provider.mjs")
+AUTO_ROUTING_PROVIDERS = ("dbnav", "dbweb", "transport_rest")
+ROUTING_PROVIDER_ALIASES = {
+    "db_nav": "dbnav",
+    "db-nav": "dbnav",
+    "db_vendo": "dbweb",
+    "db-vendo": "dbweb",
+    "transport.rest": "transport_rest",
+    "transport-rest": "transport_rest",
+}
 TRANSFER_COMFORT_PENALTY_MINUTES = float(os.getenv("TRANSFER_COMFORT_PENALTY_MINUTES", "5"))
 DEFAULT_FALLBACK_DELAY_MINUTES = float(os.getenv("DEFAULT_FALLBACK_DELAY_MINUTES", "120"))
 
@@ -271,37 +280,29 @@ def run_analysis(data):
 
 
 def fetch_live_journeys(starting_location, end_location, time_obj, include_long_distance):
-    provider = ROUTING_PROVIDER
+    provider = ROUTING_PROVIDER_ALIASES.get(ROUTING_PROVIDER, ROUTING_PROVIDER)
     errors = []
+    provider_chain = AUTO_ROUTING_PROVIDERS if provider == "auto" else (provider,)
+    provider_handlers = {
+        "dbnav": fetch_dbnav_journeys,
+        "dbweb": fetch_dbweb_journeys,
+        "transport_rest": fetch_transport_rest_journeys,
+        "pyhafas": fetch_pyhafas_journeys,
+    }
 
-    if provider in ("auto", "pyhafas"):
-        try:
-            print("Trying pyhafas route provider")
-            return fetch_pyhafas_journeys(starting_location, end_location, time_obj, include_long_distance)
-        except Exception as error:
-            errors.append(f"pyhafas: {error}")
-            print(f"pyhafas route provider failed: {error}")
-            if provider == "pyhafas":
-                raise
+    for provider_name in provider_chain:
+        fetch_provider = provider_handlers.get(provider_name)
+        if not fetch_provider:
+            errors.append(f"{provider_name}: unknown route provider")
+            continue
 
-    if provider in ("auto", "dbweb", "db_vendo", "db-vendo"):
         try:
-            print("Trying DB web route provider")
-            return fetch_dbweb_journeys(starting_location, end_location, time_obj, include_long_distance)
+            print(f"Trying {provider_name} route provider")
+            return fetch_provider(starting_location, end_location, time_obj, include_long_distance)
         except Exception as error:
-            errors.append(f"dbweb: {error}")
-            print(f"DB web route provider failed: {error}")
-            if provider in ("dbweb", "db_vendo", "db-vendo"):
-                raise
-
-    if provider in ("auto", "transport_rest", "transport.rest"):
-        try:
-            print("Trying transport.rest route provider")
-            return fetch_transport_rest_journeys(starting_location, end_location, time_obj, include_long_distance)
-        except Exception as error:
-            errors.append(f"transport.rest: {error}")
-            print(f"transport.rest route provider failed: {error}")
-            if provider in ("transport_rest", "transport.rest"):
+            errors.append(f"{provider_name}: {error}")
+            print(f"{provider_name} route provider failed: {error}")
+            if provider != "auto":
                 raise
 
     raise RuntimeError("No route provider worked. " + " | ".join(errors))
@@ -436,7 +437,15 @@ def is_usable_fallback_journey(journey, earliest_departure, missed_train, missed
     return not (same_missed_train and same_or_earlier_departure)
 
 
+def fetch_dbnav_journeys(starting_location, end_location, time_obj, include_long_distance):
+    return fetch_db_vendo_journeys("dbnav", starting_location, end_location, time_obj, include_long_distance)
+
+
 def fetch_dbweb_journeys(starting_location, end_location, time_obj, include_long_distance):
+    return fetch_db_vendo_journeys("dbweb", starting_location, end_location, time_obj, include_long_distance)
+
+
+def fetch_db_vendo_journeys(profile, starting_location, end_location, time_obj, include_long_distance):
     departure_time = format_local_departure_time(time_obj)
     command = [
         NODE_EXECUTABLE,
@@ -445,6 +454,7 @@ def fetch_dbweb_journeys(starting_location, end_location, time_obj, include_long
         end_location,
         departure_time,
         str(include_long_distance).lower(),
+        profile,
     ]
 
     completed = subprocess.run(
@@ -458,7 +468,7 @@ def fetch_dbweb_journeys(starting_location, end_location, time_obj, include_long
 
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
-        raise RuntimeError(detail or f"DB web provider exited with code {completed.returncode}")
+        raise RuntimeError(detail or f"{profile} provider exited with code {completed.returncode}")
 
     payload = json.loads(completed.stdout)
     normalized_journeys = []

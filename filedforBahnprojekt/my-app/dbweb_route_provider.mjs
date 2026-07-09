@@ -1,22 +1,38 @@
 import {createClient} from 'db-vendo-client';
+import {profile as dbnavProfile} from 'db-vendo-client/p/dbnav/index.js';
 import {profile as dbwebProfile} from 'db-vendo-client/p/dbweb/index.js';
 import {readSimplifiedStations} from 'db-hafas-stations';
 
-const [fromQuery, toQuery, departureIso, includeLongDistanceArg] = process.argv.slice(2);
+const [fromQuery, toQuery, departureIso, includeLongDistanceArg, profileArg = 'dbweb'] = process.argv.slice(2);
 
 if (!fromQuery || !toQuery || !departureIso) {
-	console.error('Usage: node dbweb_route_provider.mjs <from> <to> <departureIso> <includeLongDistance>');
+	console.error('Usage: node dbweb_route_provider.mjs <from> <to> <departureIso> <includeLongDistance> [dbnav|dbweb]');
+	process.exit(2);
+}
+
+const profileName = profileArg.toLowerCase();
+const selectedProfile = profileName === 'dbnav'
+	? dbnavProfile
+	: profileName === 'dbweb'
+		? dbwebProfile
+		: null;
+
+if (!selectedProfile) {
+	console.error(`Unknown DB route profile: ${profileArg}`);
 	process.exit(2);
 }
 
 const includeLongDistance = includeLongDistanceArg !== 'false';
-const userAgent = process.env.DBWEB_USER_AGENT ||
-	'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const defaultDbnavUserAgent = 'OnPoint Bahnprojekt/1.0 (https://bahn.juhermes.de; https://juhermes.de)';
+const defaultDbwebUserAgent = 'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const userAgent = profileName === 'dbnav'
+	? process.env.DBNAV_USER_AGENT || process.env.DB_ROUTE_USER_AGENT || defaultDbnavUserAgent
+	: process.env.DBWEB_USER_AGENT || process.env.DB_ROUTE_USER_AGENT || defaultDbwebUserAgent;
 const productgattungen = includeLongDistance
 	? ['ICE', 'EC_IC', 'IR', 'REGIONAL', 'SBAHN', 'BUS', 'SCHIFF', 'UBAHN', 'TRAM', 'ANRUFPFLICHTIG']
 	: ['REGIONAL', 'SBAHN', 'BUS', 'SCHIFF', 'UBAHN', 'TRAM', 'ANRUFPFLICHTIG'];
 
-const client = createClient(dbwebProfile, userAgent);
+const client = createClient(selectedProfile, userAgent);
 
 const normalizeStationName = (value) => String(value || '')
 	.toLowerCase()
@@ -86,6 +102,87 @@ const findStation = async (query) => {
 
 const from = await findStation(fromQuery);
 const to = await findStation(toQuery);
+
+const stationName = (station) => station?.name || 'N/A';
+
+const formatClientTrainDisplayName = (line, fallback) => {
+	const label = line?.name || line?.productName || fallback;
+	const number = line?.fahrtNr;
+
+	if (!label || !number) {
+		return label || number || null;
+	}
+
+	if (String(label).includes(String(number))) {
+		return label;
+	}
+
+	if (/\d/.test(String(label))) {
+		return `${label} (${number})`;
+	}
+
+	return `${label} ${number}`;
+};
+
+const fetchDbnavJourneys = async () => {
+	const response = await client.journeys(from.id, to.id, {
+		departure: new Date(departureIso),
+		results: 10,
+		transfers: 10,
+		transferTime: 5,
+		stopovers: false,
+		language: 'de',
+		products: {
+			nationalExpress: includeLongDistance,
+			national: includeLongDistance,
+			regionalExpress: true,
+			regional: true,
+			suburban: true,
+			bus: true,
+			ferry: true,
+			subway: true,
+			tram: true,
+			taxi: true,
+		},
+	});
+
+	return (response.journeys || [])
+		.map((journey) => {
+			const legs = [];
+
+			for (const leg of journey.legs || []) {
+				if (leg.walking || leg.transfer) {
+					continue;
+				}
+
+				const trainName = formatClientTrainDisplayName(leg.line, leg.tripId);
+				const matchName = leg.line?.fahrtNr || leg.line?.name || trainName;
+				const departure = leg.plannedDeparture || leg.departure;
+				const arrival = leg.plannedArrival || leg.arrival;
+
+				if (!trainName || !matchName || !departure || !arrival) {
+					continue;
+				}
+
+				legs.push({
+					name: trainName,
+					match_name: matchName,
+					origin: stationName(leg.origin),
+					destination: stationName(leg.destination),
+					departure,
+					arrival,
+				});
+			}
+
+			return {legs};
+		})
+		.filter((journey) => journey.legs.length > 0);
+};
+
+if (profileName === 'dbnav') {
+	console.log(JSON.stringify({journeys: await fetchDbnavJourneys()}));
+	process.exit(0);
+}
 
 const body = {
 	minUmstiegszeit: 0,
