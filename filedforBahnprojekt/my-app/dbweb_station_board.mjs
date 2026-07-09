@@ -1,6 +1,7 @@
 import {createClient} from 'db-vendo-client';
 import {profile as dbProfile} from 'db-vendo-client/p/db/index.js';
 import {profile as dbwebProfile} from 'db-vendo-client/p/dbweb/index.js';
+import {profile as dbrisProfile} from 'db-vendo-client/p/dbris/index.js';
 import {readSimplifiedStations} from 'db-hafas-stations';
 
 const [
@@ -18,11 +19,22 @@ if (!stationQuery) {
 
 const duration = Number.parseInt(durationArg, 10);
 const results = Number.parseInt(resultsArg, 10);
-const userAgent = process.env.DBWEB_USER_AGENT ||
-	'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const stationBoardProfile = (process.env.STATION_BOARD_PROFILE || 'db').toLowerCase() === 'dbweb'
-	? dbwebProfile
-	: dbProfile;
+const profileName = (process.env.STATION_BOARD_PROFILE || 'dbweb').toLowerCase();
+const stationBoardProfile = profileName === 'dbris'
+	? dbrisProfile
+	: profileName === 'db'
+		? dbProfile
+		: dbwebProfile;
+
+if (profileName === 'dbris' && (!process.env.DB_CLIENT_ID || !process.env.DB_API_KEY)) {
+	throw new Error('STATION_BOARD_PROFILE=dbris requires DB_CLIENT_ID and DB_API_KEY from the DB API Marketplace.');
+}
+
+const userAgent = stationBoardProfile === dbwebProfile
+	? (process.env.DBWEB_USER_AGENT ||
+		'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
+	: (process.env.STATION_BOARD_USER_AGENT ||
+		'OnPoint Bahnprojekt/1.0 (https://bahn.juhermes.de; https://juhermes.de)');
 const client = createClient(stationBoardProfile, userAgent, {enrichStations: false});
 
 const normalizeStationName = (value) => String(value || '')
