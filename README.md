@@ -21,5 +21,10 @@ path only when an override is required.
 Long routes analyze six complete alternatives by default (`MAX_ROUTE_RESULTS`).
 Every transfer still receives an exact Plan-B lookup; these lookups run with
 bounded parallelism (`FALLBACK_ROUTE_WORKERS`, default: `3`) and identical
-requests are reused within the analysis.
+requests are reused within the analysis. All Plan-B lookups of one analysis
+share a single Bun process so the DB client and station index are loaded once.
+
+The Flask reloader is disabled by default (`FLASK_DEBUG=false`). Production
+deployments should run `backend:app` through Gunicorn instead of Flask's
+development server.
 

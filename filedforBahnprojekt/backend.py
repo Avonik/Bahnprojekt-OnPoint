@@ -14,7 +14,7 @@ import re
 import requests
 from javascript_runtime import resolve_javascript_runtime
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
+import time
 from zoneinfo import ZoneInfo
 
 from connection_model import estimate_connection
@@ -115,6 +115,7 @@ def repair_text_encoding(value):
 
 
 def run_analysis(data):
+    analysis_started_at = time.monotonic()
     time_input = data['time']
     sumTrains = 0
 
@@ -139,14 +140,15 @@ def run_analysis(data):
     arrival_delay_cache = {}
     departure_delay_cache = {}
 
-    journeys = fetch_live_journeys(
+    journeys, route_provider = fetch_live_journeys(
         starting_location,
         end_location,
         time_obj,
-        includeThem
+        includeThem,
+        return_provider=True,
     )
 
-    fallback_executor = ThreadPoolExecutor(max_workers=FALLBACK_ROUTE_WORKERS)
+    fallback_executor = FallbackBatchExecutor(route_provider, FALLBACK_ROUTE_WORKERS)
     try:
         for journey in journeys:
             last_exp_arrival = None
@@ -326,7 +328,8 @@ def run_analysis(data):
 
     print(
         f'Route analysis completed: journeys={len(journeys)}, '
-        f'fallback lookups={len(fallback_futures)}, workers={FALLBACK_ROUTE_WORKERS}'
+        f'fallback lookups={len(fallback_futures)}, workers={FALLBACK_ROUTE_WORKERS}, '
+        f'seconds={time.monotonic() - analysis_started_at:.2f}'
     )
 
     return resultJSON
@@ -338,6 +341,7 @@ def fetch_live_journeys(
     time_obj,
     include_long_distance,
     max_results=MAX_ROUTE_RESULTS,
+    return_provider=False,
 ):
     provider = ROUTING_PROVIDER_ALIASES.get(ROUTING_PROVIDER, ROUTING_PROVIDER)
     errors = []
@@ -358,7 +362,8 @@ def fetch_live_journeys(
         try:
             print(f"Trying {provider_name} route provider")
             journeys = fetch_provider(starting_location, end_location, time_obj, include_long_distance)
-            return journeys if max_results is None else journeys[:max_results]
+            selected_journeys = journeys if max_results is None else journeys[:max_results]
+            return (selected_journeys, provider_name) if return_provider else selected_journeys
         except Exception as error:
             errors.append(f"{provider_name}: {error}")
             print(f"{provider_name} route provider failed: {error}")
@@ -397,6 +402,51 @@ def estimate_fallback_start_time(planned_arrival, planned_departure, connection_
         missed_departure + datetime.timedelta(minutes=1),
         missed_arrival,
     )
+
+
+class DeferredFallbackResult:
+    def __init__(self):
+        self.value = None
+        self.error = None
+
+    def result(self):
+        if self.error is not None:
+            raise self.error
+        return self.value
+
+
+class FallbackBatchExecutor:
+    """Collect fallback lookups and execute them in one Bun process."""
+
+    def __init__(self, provider, concurrency):
+        self.provider = provider
+        self.concurrency = concurrency
+        self.jobs = []
+
+    def submit(self, function, *args):
+        deferred = DeferredFallbackResult()
+        self.jobs.append((deferred, function, args))
+        return deferred
+
+    def shutdown(self, wait=True):
+        if not self.jobs:
+            return
+
+        try:
+            if self.provider in ("dbnav", "dbweb"):
+                values = fetch_db_vendo_fallback_batch(
+                    self.provider,
+                    [args for _, _, args in self.jobs],
+                    self.concurrency,
+                )
+            else:
+                values = [function(*args) for _, function, args in self.jobs]
+
+            for (deferred, _, _), value in zip(self.jobs, values):
+                deferred.value = value
+        except Exception as error:
+            for deferred, _, _ in self.jobs:
+                deferred.error = error
 
 
 def find_fallback_route(
@@ -438,13 +488,34 @@ def find_fallback_route(
         cache[cache_key] = None
         return None
 
+    fallback = build_fallback_route(
+        fallback_journeys,
+        starting_location,
+        end_location,
+        time_obj,
+        original_arrival,
+        missed_train,
+        missed_departure,
+    )
+    cache[cache_key] = fallback
+    return fallback
+
+
+def build_fallback_route(
+    fallback_journeys,
+    starting_location,
+    end_location,
+    time_obj,
+    original_arrival,
+    missed_train,
+    missed_departure,
+):
     usable_journeys = [
         journey for journey in fallback_journeys
         if is_usable_fallback_journey(journey, time_obj, missed_train, missed_departure)
     ]
 
     if not usable_journeys:
-        cache[cache_key] = None
         return None
 
     best = min(usable_journeys, key=lambda journey: journey["legs"][-1]["arrival"])
@@ -453,7 +524,7 @@ def find_fallback_route(
     arrival = last_leg["arrival"]
     extra_minutes = max(0.0, (arrival - original_arrival).total_seconds() / 60)
 
-    fallback = {
+    return {
         "from": starting_location,
         "to": end_location,
         "search_time": format_time(time_obj),
@@ -475,8 +546,105 @@ def find_fallback_route(
         ],
     }
 
-    cache[cache_key] = fallback
-    return fallback
+
+def fetch_db_vendo_fallback_batch(profile, job_args, concurrency):
+    requests_payload = []
+    for index, args in enumerate(job_args):
+        (
+            starting_location,
+            end_location,
+            time_obj,
+            original_arrival,
+            include_long_distance,
+            missed_train,
+            missed_departure,
+            cache,
+        ) = args
+        requests_payload.append({
+            "id": index,
+            "from": starting_location,
+            "to": end_location,
+            "departure": format_local_departure_time(time_obj),
+            "includeLongDistance": include_long_distance,
+            "results": 10,
+        })
+
+    command = [
+        NODE_EXECUTABLE,
+        DBWEB_ROUTE_PROVIDER_SCRIPT,
+        "--batch",
+        profile,
+        str(concurrency),
+    ]
+    batches = (len(job_args) + concurrency - 1) // concurrency
+    started_at = time.monotonic()
+    completed = subprocess.run(
+        command,
+        input=json.dumps({"requests": requests_payload}),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=max(60, batches * 20),
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(detail or f"{profile} batch provider exited with code {completed.returncode}")
+
+    payload = json.loads(completed.stdout)
+    responses = {response.get("id"): response for response in payload.get("responses", [])}
+    results = []
+
+    for index, args in enumerate(job_args):
+        (
+            starting_location,
+            end_location,
+            time_obj,
+            original_arrival,
+            include_long_distance,
+            missed_train,
+            missed_departure,
+            cache,
+        ) = args
+        cache_key = fallback_route_cache_key(
+            starting_location,
+            end_location,
+            time_obj,
+            original_arrival,
+            include_long_distance,
+            missed_train,
+            missed_departure,
+        )
+        response = responses.get(index, {})
+        if response.get("error"):
+            print(
+                f'Fallback route lookup skipped for {starting_location} -> '
+                f'{end_location}: {response["error"]}'
+            )
+            fallback = None
+        else:
+            fallback_journeys = normalize_db_vendo_payload({
+                "journeys": response.get("journeys", []),
+            })
+            fallback = build_fallback_route(
+                fallback_journeys,
+                starting_location,
+                end_location,
+                time_obj,
+                original_arrival,
+                missed_train,
+                missed_departure,
+            )
+
+        cache[cache_key] = fallback
+        results.append(fallback)
+
+    elapsed_seconds = time.monotonic() - started_at
+    print(
+        f'Fallback batch completed: lookups={len(job_args)}, '
+        f'workers={concurrency}, seconds={elapsed_seconds:.2f}'
+    )
+    return results
 
 
 def fallback_route_cache_key(
@@ -552,7 +720,10 @@ def fetch_db_vendo_journeys(profile, starting_location, end_location, time_obj, 
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise RuntimeError(detail or f"{profile} provider exited with code {completed.returncode}")
 
-    payload = json.loads(completed.stdout)
+    return normalize_db_vendo_payload(json.loads(completed.stdout))
+
+
+def normalize_db_vendo_payload(payload):
     normalized_journeys = []
 
     for journey in payload.get("journeys", []):
@@ -915,4 +1086,10 @@ def grab_EV_departure(train, station, departure_time):
     return train_tracked, expected_departure_formatted, average_departure_delay
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)  # Starts the server on localhost:5000
+    debug_enabled = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
+    app.run(
+        host='0.0.0.0',
+        port=5000,
+        debug=debug_enabled,
+        use_reloader=debug_enabled,
+    )
