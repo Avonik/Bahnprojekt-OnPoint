@@ -14,6 +14,7 @@ import re
 import requests
 from javascript_runtime import resolve_javascript_runtime
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
 
 from connection_model import estimate_connection
@@ -67,6 +68,8 @@ ROUTING_PROVIDER_ALIASES = {
 }
 TRANSFER_COMFORT_PENALTY_MINUTES = float(os.getenv("TRANSFER_COMFORT_PENALTY_MINUTES", "5"))
 DEFAULT_FALLBACK_DELAY_MINUTES = float(os.getenv("DEFAULT_FALLBACK_DELAY_MINUTES", "120"))
+MAX_ROUTE_RESULTS = max(1, int(os.getenv("MAX_ROUTE_RESULTS", "6")))
+FALLBACK_ROUTE_WORKERS = max(1, int(os.getenv("FALLBACK_ROUTE_WORKERS", "3")))
 
 
 def db_config():
@@ -132,6 +135,9 @@ def run_analysis(data):
     best_score = float("inf")
     best_journey_index = -1
     fallback_cache = {}
+    fallback_futures = {}
+    arrival_delay_cache = {}
+    departure_delay_cache = {}
 
     journeys = fetch_live_journeys(
         starting_location,
@@ -140,162 +146,199 @@ def run_analysis(data):
         includeThem
     )
 
-    #print(journeys)
+    fallback_executor = ThreadPoolExecutor(max_workers=FALLBACK_ROUTE_WORKERS)
+    try:
+        for journey in journeys:
+            last_exp_arrival = None
+            connection_success_product = 1.0
+            transfer_penalty_minutes = 0.0
+            duration_minutes = journey["duration"].total_seconds() / 60
+            final_arrival_time = journey["legs"][-1]["arrival"]
 
-    for idx, journey in enumerate(journeys):
-        last_exp_arrival = None
-        connection_success_product = 1.0
+            journey_data = {
+                "duration": str(journey["duration"]),
+                "scheduled_duration_minutes": round(duration_minutes, 1),
+                "legs": [],
+                "odds_of_successful_journey": 100,
+                "risk_cost_minutes": 0,
+                "transfer_penalty_minutes": 0,
+                "expected_total_cost_minutes": round(duration_minutes, 1),
+            }
+
+            for leg in journey["legs"]:
+                origin_station = leg["origin"]
+                departure_time = leg["departure"]
+                arrival_time = leg["arrival"]
+                train = leg["name"]
+                train_lookup_name = leg.get("match_name", train)
+                departure_time_formatted = format_time(departure_time)
+                arrival_time_formatted = format_time(arrival_time)
+
+                if last_exp_arrival is not None:
+                    arrival_cache_key = (last_train_lookup_name, origin_station)
+                    if arrival_cache_key not in arrival_delay_cache:
+                        arrival_delay_cache[arrival_cache_key] = get_all_arrival_delays(
+                            cursor,
+                            last_train_lookup_name,
+                            origin_station,
+                        )
+                    all_last_arrival_delays = arrival_delay_cache[arrival_cache_key]
+
+                    departure_cache_key = (train_lookup_name, origin_station)
+                    if departure_cache_key not in departure_delay_cache:
+                        departure_delay_cache[departure_cache_key] = get_all_departure_delays(
+                            cursor,
+                            train_lookup_name,
+                            origin_station,
+                        )
+                    all_next_departure_delays = departure_delay_cache[departure_cache_key]
+                    planned_layover_minutes = (departure_time - last_plan_arrival).total_seconds() / 60
+                    connection_estimate = estimate_connection(
+                        all_last_arrival_delays,
+                        all_next_departure_delays,
+                        planned_layover_minutes,
+                    )
+                    expected_arrival_dt = add_delay_to_time(
+                        last_plan_arrival,
+                        connection_estimate.expected_arrival_delay_minutes,
+                    )
+                    expected_departure_dt = add_delay_to_time(
+                        departure_time,
+                        connection_estimate.expected_departure_delay_minutes,
+                    )
+                    fallback_start_time = estimate_fallback_start_time(
+                        last_plan_arrival,
+                        departure_time,
+                        connection_estimate,
+                    )
+                    fallback_key = fallback_route_cache_key(
+                        origin_station,
+                        end_location,
+                        fallback_start_time,
+                        final_arrival_time,
+                        includeThem,
+                        train_lookup_name,
+                        departure_time,
+                    )
+                    fallback_future = fallback_futures.get(fallback_key)
+                    if fallback_future is None:
+                        fallback_future = fallback_executor.submit(
+                            find_fallback_route,
+                            origin_station,
+                            end_location,
+                            fallback_start_time,
+                            final_arrival_time,
+                            includeThem,
+                            train_lookup_name,
+                            departure_time,
+                            fallback_cache,
+                        )
+                        fallback_futures[fallback_key] = fallback_future
+
+                    transfer_penalty_minutes += TRANSFER_COMFORT_PENALTY_MINUTES
+                    connection_success_product *= connection_estimate.success_probability
+                    sumTrains += (
+                        connection_estimate.arrival_samples
+                        + connection_estimate.departure_samples
+                    )
+
+                    journey_data["legs"].append({
+                        "layover_at": origin_station,
+                        "layover_feasible": expected_arrival_dt <= expected_departure_dt,
+                        "planned_layover_minutes": round(planned_layover_minutes, 1),
+                        "planned_arrival": last_arrival_time_formatted,
+                        "planned_departure": departure_time_formatted,
+                        "expected_arrival": format_time(expected_arrival_dt),
+                        "expected_departure": format_time(expected_departure_dt),
+                        "last_train": last_train,
+                        "last_train_average_arrival_delay": round(connection_estimate.expected_arrival_delay_minutes, 2),
+                        "last_train_tracked": connection_estimate.arrival_samples,
+                        "next_train": train,
+                        "next_train_average_departure_delay": round(connection_estimate.expected_departure_delay_minutes, 2),
+                        "next_train_tracked": connection_estimate.departure_samples,
+                        "arrival_at_next_station": arrival_time_formatted,
+                        "connection_success_probability": round(connection_estimate.success_probability * 100, 2),
+                        "raw_connection_success_probability": round(connection_estimate.raw_success_probability * 100, 2),
+                        "connection_failure_probability": round(connection_estimate.failure_probability * 100, 2),
+                        "fallback_search_time": format_time(fallback_start_time),
+                        "simulation": {
+                            "method": connection_estimate.method,
+                            "simulated_cases": connection_estimate.simulated_cases,
+                            "effective_sample_size": round(connection_estimate.effective_sample_size, 1),
+                            "expected_miss_lateness_minutes": round(connection_estimate.expected_miss_lateness_minutes, 1),
+                        },
+                        "_fallback_future": fallback_future,
+                        "_failure_probability": connection_estimate.failure_probability,
+                    })
+                else:
+                    journey_data["start_train"] = train
+                    journey_data["start_time"] = departure_time_formatted
+
+                last_exp_arrival = True
+                last_plan_arrival = arrival_time
+                last_arrival_time_formatted = arrival_time_formatted
+                last_train = train
+                last_train_lookup_name = train_lookup_name
+
+            journey_data["odds_of_successful_journey"] = round(float(connection_success_product * 100), 2)
+            journey_data["transfer_penalty_minutes"] = round(transfer_penalty_minutes, 1)
+            journey_data["end_time"] = (
+                journey_data["legs"][-1]["arrival_at_next_station"]
+                if journey_data["legs"]
+                else arrival_time_formatted
+            )
+            resultJSON["journeys"].append(journey_data)
+    finally:
+        fallback_executor.shutdown(wait=True)
+
+    for idx, journey_data in enumerate(resultJSON["journeys"]):
         risk_cost_minutes = 0.0
-        transfer_penalty_minutes = 0.0
-        duration_minutes = journey["duration"].total_seconds() / 60
-        final_arrival_time = journey["legs"][-1]["arrival"]
+        for leg_data in journey_data["legs"]:
+            fallback_route = leg_data.pop("_fallback_future").result()
+            failure_probability = leg_data.pop("_failure_probability")
+            fallback_delay_minutes = (
+                fallback_route["extra_minutes"]
+                if fallback_route
+                else DEFAULT_FALLBACK_DELAY_MINUTES
+            )
+            connection_risk_cost_minutes = failure_probability * fallback_delay_minutes
+            risk_cost_minutes += connection_risk_cost_minutes
+            leg_data["connection_risk_cost_minutes"] = round(connection_risk_cost_minutes, 1)
+            leg_data["fallback_delay_minutes"] = round(fallback_delay_minutes, 1)
+            leg_data["fallback_route"] = fallback_route
 
-        journey_data = {
-            "duration": str(journey["duration"]),
-            "scheduled_duration_minutes": round(duration_minutes, 1),
-            "legs": [],
-            "odds_of_successful_journey": 100,
-            "risk_cost_minutes": 0,
-            "transfer_penalty_minutes": 0,
-            "expected_total_cost_minutes": round(duration_minutes, 1),
-        }
-
-        for leg in journey["legs"]:
-            origin_station = leg["origin"]
-            departure_time = leg["departure"]
-            arrival_time = leg["arrival"]
-            train = leg["name"]
-            train_lookup_name = leg.get("match_name", train)
-            departure_time_formatted = format_time(departure_time)
-            arrival_time_formatted = format_time(arrival_time)
-
-            if last_exp_arrival is not None:
-                all_last_arrival_delays = get_all_arrival_delays(cursor, last_train_lookup_name, origin_station)
-                all_next_departure_delays = get_all_departure_delays(cursor, train_lookup_name, origin_station)
-                planned_layover_minutes = (departure_time - last_plan_arrival).total_seconds() / 60
-                connection_estimate = estimate_connection(
-                    all_last_arrival_delays,
-                    all_next_departure_delays,
-                    planned_layover_minutes,
-                )
-                expected_arrival_dt = add_delay_to_time(
-                    last_plan_arrival,
-                    connection_estimate.expected_arrival_delay_minutes,
-                )
-                expected_departure_dt = add_delay_to_time(
-                    departure_time,
-                    connection_estimate.expected_departure_delay_minutes,
-                )
-                fallback_start_time = estimate_fallback_start_time(
-                    last_plan_arrival,
-                    departure_time,
-                    connection_estimate,
-                )
-                fallback_route = find_fallback_route(
-                    origin_station,
-                    end_location,
-                    fallback_start_time,
-                    final_arrival_time,
-                    includeThem,
-                    train_lookup_name,
-                    departure_time,
-                    fallback_cache,
-                )
-                fallback_delay_minutes = (
-                    fallback_route["extra_minutes"]
-                    if fallback_route
-                    else DEFAULT_FALLBACK_DELAY_MINUTES
-                )
-                connection_risk_cost_minutes = (
-                    connection_estimate.failure_probability * fallback_delay_minutes
-                )
-                transfer_penalty_minutes += TRANSFER_COMFORT_PENALTY_MINUTES
-                risk_cost_minutes += connection_risk_cost_minutes
-                connection_success_product *= connection_estimate.success_probability
-
-                sumTrains += (
-                    connection_estimate.arrival_samples
-                    + connection_estimate.departure_samples
-                )
-
-                leg_data = {
-                    "layover_at": origin_station,
-                    "layover_feasible": expected_arrival_dt <= expected_departure_dt,
-                    "planned_layover_minutes": round(planned_layover_minutes, 1),
-                    "planned_arrival": last_arrival_time_formatted,
-                    "planned_departure": departure_time_formatted,
-                    "expected_arrival": format_time(expected_arrival_dt),
-                    "expected_departure": format_time(expected_departure_dt),
-                    "last_train": last_train,
-                    "last_train_average_arrival_delay": round(connection_estimate.expected_arrival_delay_minutes, 2),
-                    "last_train_tracked": connection_estimate.arrival_samples,
-                    "next_train": train,
-                    "next_train_average_departure_delay": round(connection_estimate.expected_departure_delay_minutes, 2),
-                    "next_train_tracked": connection_estimate.departure_samples,
-                    "arrival_at_next_station": arrival_time_formatted,
-                    "connection_success_probability": round(connection_estimate.success_probability * 100, 2),
-                    "raw_connection_success_probability": round(connection_estimate.raw_success_probability * 100, 2),
-                    "connection_failure_probability": round(connection_estimate.failure_probability * 100, 2),
-                    "connection_risk_cost_minutes": round(connection_risk_cost_minutes, 1),
-                    "fallback_delay_minutes": round(fallback_delay_minutes, 1),
-                    "fallback_search_time": format_time(fallback_start_time),
-                    "fallback_route": fallback_route,
-                    "simulation": {
-                        "method": connection_estimate.method,
-                        "simulated_cases": connection_estimate.simulated_cases,
-                        "effective_sample_size": round(connection_estimate.effective_sample_size, 1),
-                        "expected_miss_lateness_minutes": round(connection_estimate.expected_miss_lateness_minutes, 1),
-                    },
-                }
-
-                journey_data["legs"].append(leg_data)
-
-            else:
-                journey_data["start_train"] = train
-                journey_data["start_time"] = departure_time_formatted
-
-            last_exp_arrival = True
-            last_plan_arrival = arrival_time
-            last_arrival_time_formatted = arrival_time_formatted
-            last_train = train
-            last_train_lookup_name = train_lookup_name
-            last_station = origin_station
-
-        journey_data["odds_of_successful_journey"] = round(float(connection_success_product * 100), 2)
         journey_data["risk_cost_minutes"] = round(risk_cost_minutes, 1)
-        journey_data["transfer_penalty_minutes"] = round(transfer_penalty_minutes, 1)
         journey_data["expected_total_cost_minutes"] = round(
-            duration_minutes + transfer_penalty_minutes + risk_cost_minutes,
+            journey_data["scheduled_duration_minutes"]
+            + journey_data["transfer_penalty_minutes"]
+            + risk_cost_minutes,
             1,
         )
-
         score = journey_data["expected_total_cost_minutes"]
-
         if score < best_score:
             best_score = score
             best_journey_index = idx
 
-        #print(journey_data)
-        #Wenn es Umstiege gibt ist die Ankunft nach dem letzten Umstieg die Ankunftszeit, sonst ist leg leer und einfach die ankunftszeit ist die ankunftszeit (lol)
-        if journey_data["legs"]:
-            journey_data["end_time"] = journey_data["legs"][-1]["arrival_at_next_station"]
-        else:
-            journey_data["end_time"] = arrival_time_formatted
-        resultJSON["journeys"].append(journey_data)
+    resultJSON["sum_tracked_trains"] = sumTrains
 
-        resultJSON["sum_tracked_trains"] = sumTrains
-
-
-    # Mark the best journey
     if best_journey_index >= 0:
         resultJSON["journeys"][best_journey_index]["best_journey"] = True
 
-
+    print(
+        f'Route analysis completed: journeys={len(journeys)}, '
+        f'fallback lookups={len(fallback_futures)}, workers={FALLBACK_ROUTE_WORKERS}'
+    )
 
     return resultJSON
 
 
-def fetch_live_journeys(starting_location, end_location, time_obj, include_long_distance):
+def fetch_live_journeys(
+    starting_location,
+    end_location,
+    time_obj,
+    include_long_distance,
+    max_results=MAX_ROUTE_RESULTS,
+):
     provider = ROUTING_PROVIDER_ALIASES.get(ROUTING_PROVIDER, ROUTING_PROVIDER)
     errors = []
     provider_chain = AUTO_ROUTING_PROVIDERS if provider == "auto" else (provider,)
@@ -314,7 +357,8 @@ def fetch_live_journeys(starting_location, end_location, time_obj, include_long_
 
         try:
             print(f"Trying {provider_name} route provider")
-            return fetch_provider(starting_location, end_location, time_obj, include_long_distance)
+            journeys = fetch_provider(starting_location, end_location, time_obj, include_long_distance)
+            return journeys if max_results is None else journeys[:max_results]
         except Exception as error:
             errors.append(f"{provider_name}: {error}")
             print(f"{provider_name} route provider failed: {error}")
@@ -368,13 +412,14 @@ def find_fallback_route(
     if starting_location == end_location:
         return None
 
-    cache_key = (
+    cache_key = fallback_route_cache_key(
         starting_location,
         end_location,
-        time_obj.isoformat(timespec="minutes"),
+        time_obj,
+        original_arrival,
         include_long_distance,
         missed_train,
-        missed_departure.isoformat(timespec="minutes"),
+        missed_departure,
     )
 
     if cache_key in cache:
@@ -386,6 +431,7 @@ def find_fallback_route(
             end_location,
             time_obj,
             include_long_distance,
+            max_results=None,
         )
     except Exception as error:
         print(f'Fallback route lookup skipped for {starting_location} -> {end_location}: {error}')
@@ -431,6 +477,26 @@ def find_fallback_route(
 
     cache[cache_key] = fallback
     return fallback
+
+
+def fallback_route_cache_key(
+    starting_location,
+    end_location,
+    time_obj,
+    original_arrival,
+    include_long_distance,
+    missed_train,
+    missed_departure,
+):
+    return (
+        starting_location,
+        end_location,
+        time_obj.isoformat(timespec="minutes"),
+        original_arrival.isoformat(timespec="minutes"),
+        include_long_distance,
+        missed_train,
+        missed_departure.isoformat(timespec="minutes"),
+    )
 
 
 def is_usable_fallback_journey(journey, earliest_departure, missed_train, missed_departure):

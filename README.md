@@ -18,3 +18,8 @@ platform-specific Bun runtime that the Python backend and scraper select when
 64-bit Raspberry Pi installations. Set `NODE_EXECUTABLE` to an explicit binary
 path only when an override is required.
 
+Long routes analyze six complete alternatives by default (`MAX_ROUTE_RESULTS`).
+Every transfer still receives an exact Plan-B lookup; these lookups run with
+bounded parallelism (`FALLBACK_ROUTE_WORKERS`, default: `3`) and identical
+requests are reused within the analysis.
+
