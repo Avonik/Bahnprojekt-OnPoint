@@ -12,6 +12,7 @@ import os
 import json
 import re
 import requests
+from javascript_runtime import resolve_javascript_runtime
 import subprocess
 from zoneinfo import ZoneInfo
 
@@ -52,7 +53,8 @@ CORS(app)  # Enables CORS to allow cross-origin requestsp
 client = HafasClient(DBProfile())
 ROUTING_PROVIDER = os.getenv("ROUTING_PROVIDER", "auto").lower()
 TRANSPORT_REST_BASE_URL = os.getenv("TRANSPORT_REST_BASE_URL", "https://v6.db.transport.rest")
-NODE_EXECUTABLE = os.getenv("NODE_EXECUTABLE", "node")
+PROJECT_DIR = os.path.dirname(__file__)
+NODE_EXECUTABLE = resolve_javascript_runtime(PROJECT_DIR)
 DBWEB_ROUTE_PROVIDER_SCRIPT = os.path.join(os.path.dirname(__file__), "my-app", "dbweb_route_provider.mjs")
 AUTO_ROUTING_PROVIDERS = ("dbnav", "dbweb", "transport_rest")
 ROUTING_PROVIDER_ALIASES = {

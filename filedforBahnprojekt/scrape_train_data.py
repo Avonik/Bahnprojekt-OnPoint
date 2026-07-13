@@ -8,6 +8,8 @@ from pathlib import Path
 
 import mysql.connector
 
+from javascript_runtime import resolve_javascript_runtime
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -41,6 +43,7 @@ def load_local_env(path):
 
 
 load_local_env(PROJECT_DIR / ".env")
+JAVASCRIPT_RUNTIME = resolve_javascript_runtime(PROJECT_DIR)
 
 DEFAULT_STATIONS = [
     "Braunschweig Hbf",
@@ -127,7 +130,7 @@ def first_existing(columns, candidates):
 
 def fetch_station_board(station, mode, when_iso, duration, results):
     command = [
-        os.getenv("NODE_EXECUTABLE", "node"),
+        JAVASCRIPT_RUNTIME,
         str(NODE_BOARD_SCRIPT),
         station,
         mode,
