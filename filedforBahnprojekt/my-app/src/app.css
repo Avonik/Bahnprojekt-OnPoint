@@ -63,6 +63,46 @@ select {
   gap: 6px;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.language-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.language-switch button {
+  min-width: 38px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.language-switch button:hover,
+.language-switch button:focus-visible {
+  color: #f8fafc;
+}
+
+.language-switch button.active {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
 .site-nav a {
   border-radius: 8px;
   color: #cbd5e1;
@@ -116,6 +156,10 @@ select {
 
   .menu-button {
     display: inline-block;
+  }
+
+  .header-right {
+    gap: 8px;
   }
 
   .site-nav {

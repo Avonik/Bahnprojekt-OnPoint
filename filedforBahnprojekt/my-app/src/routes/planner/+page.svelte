@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { language } from '$lib/i18n';
 
   const stations = [
+    'Altenbeken',
     'Braunschweig Hbf',
     'Bremen Hbf',
     'Celle',
@@ -9,12 +11,16 @@
     'Göttingen',
     'Hamburg Hbf',
     'Hamburg-Harburg',
+    'Hamm(Westf)Hbf',
     'Hameln',
     'Hannover Hbf',
+    'Herford',
     'Hildesheim Hbf',
     'Kiel Hbf',
+    'Lehrte',
     'Leer(Ostfriesl)',
     'Lingen(Ems)',
+    'Löhne(Westf)',
     'Lüneburg',
     'Magdeburg Hbf',
     'Minden(Westf)',
@@ -22,11 +28,244 @@
     'Nienburg(Weser)',
     'Oldenburg(Oldb)',
     'Osnabrück Hbf',
+    'Paderborn Hbf',
     'Rheine',
+    'Rotenburg(Wümme)',
     'Stendal Hbf',
     'Uelzen',
+    'Verden(Aller)',
     'Wolfsburg Hbf'
   ];
+
+  const copy = {
+    de: {
+      pageTitle: 'OnPoint. | Routenplaner',
+      heroTitle: 'OnPoint. findet die Route, die nicht nur schnell aussieht.',
+      heroIntro:
+        'Vergleiche Bahnverbindungen nach Dauer, Umstiegen und historischen Anschlussrisiken.',
+      route: 'Route',
+      searchConnection: 'Verbindung suchen',
+      start: 'Start',
+      startStation: 'Startbahnhof',
+      destination: 'Ziel',
+      destinationStation: 'Zielbahnhof',
+      swapStations: 'Start und Ziel tauschen',
+      earliestDeparture: 'Früheste Abfahrt',
+      regionalOnly: 'Nur Regionalverkehr',
+      regionalHelp: 'Erklärung: Nur Regionalverkehr',
+      regionalTooltip:
+        'Schließt ICE, IC und EC aus und sucht nur Verbindungen mit Regionalverkehr, S-Bahn und ähnlichen Nahverkehrsangeboten.',
+      analysisRunning: 'Analyse läuft',
+      findBestRoute: 'Beste Route finden',
+      loadingMessages: [
+        'Live-Verbindungen werden abgefragt',
+        'Historische Verspätungen werden verglichen',
+        'Anschlüsse werden simuliert',
+        'Plan-B-Routen werden gesucht',
+        'Empfehlung wird sortiert'
+      ],
+      analysis: 'Analyse',
+      foundOptions: 'Gefundene Optionen',
+      options: 'Optionen',
+      trackedTrains: 'getrackte Züge',
+      recommendation: 'Empfehlung',
+      option: 'Option',
+      success: 'Erfolg',
+      duration: 'Dauer',
+      expected: 'Erwartet',
+      transfers: 'Umstiege',
+      riskTime: 'Risikozeit',
+      firstTrain: 'Startzug',
+      with: 'mit',
+      connectionChance: 'Anschlusschance',
+      plannedExpectedArrival: 'Ankunft geplant / erwartet',
+      plannedExpectedDeparture: 'Weiterfahrt geplant / erwartet',
+      dataPoints: 'Datenpunkte',
+      historicalMatches: 'historische Treffer',
+      riskCost: 'Risikokosten',
+      failure: 'Fehlschlag',
+      planBLoss: 'Plan-B-Verlust',
+      planB: 'Plan B bei verpasstem Anschluss',
+      searchFrom: 'Suche ab',
+      comparedWithOriginal: 'gegenüber der ursprünglichen Verbindung',
+      noReliableAlternative: 'Keine verlässliche Alternative gefunden',
+      fallbackDefaultBefore: 'Für die Bewertung wird eine mögliche Zusatzverspätung von',
+      fallbackDefaultAfter: 'angenommen.',
+      directConnection: 'Direktverbindung ohne Umstieg',
+      arrival: 'Ankunft',
+      minutesTransfer: 'min Umstieg',
+      statusRisk: 'riskant',
+      statusTight: 'knapp',
+      statusStable: 'stabil',
+      faqTitle: 'Häufige Fragen',
+      faq: [
+        {
+          question: 'Wie entsteht die Empfehlung?',
+          answer:
+            'OnPoint. kombiniert aktuelle Verbindungen mit historischen Verspätungen der beteiligten Züge und Bahnhöfe. Bewertet werden Fahrzeit, Umstiege, Anschlusschancen und die Folgen eines verpassten Anschlusses.'
+        },
+        {
+          question: 'Was bedeutet die Anschlusschance?',
+          answer:
+            'Sie ist eine Schätzung dafür, wie wahrscheinlich ein Umstieg unter ähnlichen Bedingungen klappt. Sie hilft beim Vergleichen, ist aber keine Garantie für eine einzelne Reise.'
+        },
+        {
+          question: 'Welche historischen Daten werden verwendet?',
+          answer:
+            'Verwendet werden gespeicherte Ankunfts- und Abfahrtsverspätungen sowie bekannte Ausfälle an den unterstützten Bahnhöfen. Persönliche Reisedaten werden dafür nicht benötigt.'
+        },
+        {
+          question: 'Werden Zugausfälle berücksichtigt?',
+          answer:
+            'Bekannte Ausfälle fließen in die historischen Auswertungen ein. Kurzfristige Änderungen können trotzdem erst sichtbar werden, wenn sie in den aktuellen Fahrplandaten auftauchen.'
+        },
+        {
+          question: 'Warum wird nicht immer die schnellste Route empfohlen?',
+          answer:
+            'Ein sehr kurzer Umstieg kann auf dem Papier schnell sein, aber ein hohes Risiko und einen großen Zeitverlust verursachen. Deshalb kann eine etwas längere, robustere Route besser abschneiden.'
+        },
+        {
+          question: 'Was bedeuten Risikozeit und Plan B?',
+          answer:
+            'Die Risikozeit schätzt den erwartbaren Zeitverlust durch mögliche Anschlussprobleme. Der Plan B zeigt eine Alternative, die nach einem verpassten Anschluss voraussichtlich verfügbar wäre.'
+        },
+        {
+          question: 'Sind die Ergebnisse eine Garantie oder ein Ticketangebot?',
+          answer:
+            'Nein. Die Werte sind datenbasierte Schätzungen und ersetzen keine Live-Anzeige des Verkehrsunternehmens. Tickets, Preise und verbindliche Reiseinformationen erhalten Sie beim jeweiligen Anbieter.'
+        }
+      ],
+      footerProject: 'Ein Bahnprojekt von Julian Hermes.',
+      footerAria: 'Links im Seitenfuß',
+      copyright:
+        '© 2026 Julian Hermes. Datenquellen: importierte historische Bahn-Dumps, Deutsche Bahn Web API, db-vendo-client/pyhafas.',
+      errors: {
+        missingFields: 'Bitte wählen Sie Start, Ziel und Abfahrtszeit aus.',
+        sameStation: 'Start und Ziel müssen unterschiedlich sein.',
+        noConnection:
+          'Für diese Auswahl wurde keine passende Verbindung gefunden. Versuchen Sie eine andere Uhrzeit oder Route.',
+        busy: 'Gerade suchen viele Personen gleichzeitig. Bitte versuchen Sie es gleich noch einmal.',
+        timeout: 'Die Suche dauert ungewöhnlich lange. Bitte versuchen Sie es noch einmal.',
+        unavailable:
+          'Die Verbindungssuche ist momentan nicht erreichbar. Bitte versuchen Sie es später erneut.',
+        requestFailed: 'Die Verbindung konnte nicht geladen werden. Bitte versuchen Sie es erneut.'
+      }
+    },
+    en: {
+      pageTitle: 'OnPoint. | Journey planner',
+      heroTitle: 'OnPoint. finds the route that does more than look fast.',
+      heroIntro:
+        'Compare train journeys by duration, transfers and historical connection risks.',
+      route: 'Route',
+      searchConnection: 'Find a connection',
+      start: 'From',
+      startStation: 'Departure station',
+      destination: 'To',
+      destinationStation: 'Destination station',
+      swapStations: 'Swap departure and destination',
+      earliestDeparture: 'Earliest departure',
+      regionalOnly: 'Regional trains only',
+      regionalHelp: 'About regional trains only',
+      regionalTooltip:
+        'Excludes ICE, IC and EC services and searches only for regional trains, suburban trains and similar local services.',
+      analysisRunning: 'Analysing',
+      findBestRoute: 'Find the best route',
+      loadingMessages: [
+        'Checking live connections',
+        'Comparing historical delays',
+        'Simulating transfers',
+        'Looking for backup routes',
+        'Ranking recommendations'
+      ],
+      analysis: 'Analysis',
+      foundOptions: 'Journey options',
+      options: 'Options',
+      trackedTrains: 'tracked trains',
+      recommendation: 'Recommended',
+      option: 'Option',
+      success: 'Success',
+      duration: 'Duration',
+      expected: 'Expected',
+      transfers: 'Transfers',
+      riskTime: 'Risk time',
+      firstTrain: 'First train',
+      with: 'on',
+      connectionChance: 'connection chance',
+      plannedExpectedArrival: 'Scheduled / expected arrival',
+      plannedExpectedDeparture: 'Scheduled / expected departure',
+      dataPoints: 'Data points',
+      historicalMatches: 'historical matches',
+      riskCost: 'Risk cost',
+      failure: 'failure',
+      planBLoss: 'backup delay',
+      planB: 'Backup if the connection is missed',
+      searchFrom: 'Search from',
+      comparedWithOriginal: 'compared with the original journey',
+      noReliableAlternative: 'No reliable alternative found',
+      fallbackDefaultBefore: 'For the score, a possible additional delay of',
+      fallbackDefaultAfter: 'is assumed.',
+      directConnection: 'Direct connection with no transfer',
+      arrival: 'Arrival',
+      minutesTransfer: 'min transfer',
+      statusRisk: 'at risk',
+      statusTight: 'tight',
+      statusStable: 'stable',
+      faqTitle: 'Frequently asked questions',
+      faq: [
+        {
+          question: 'How is the recommendation calculated?',
+          answer:
+            'OnPoint. combines current connections with historical delays for the trains and stations involved. It considers travel time, transfers, connection chances and the impact of a missed connection.'
+        },
+        {
+          question: 'What does connection chance mean?',
+          answer:
+            'It estimates how likely a transfer is to work under similar conditions. It is useful for comparing journeys, but it cannot guarantee the outcome of an individual trip.'
+        },
+        {
+          question: 'Which historical data is used?',
+          answer:
+            'The analysis uses stored arrival and departure delays as well as known cancellations at supported stations. No personal travel data is required.'
+        },
+        {
+          question: 'Are train cancellations included?',
+          answer:
+            'Known cancellations are included in the historical analysis. Last-minute changes may still appear only after they become available in current timetable data.'
+        },
+        {
+          question: 'Why is the fastest route not always recommended?',
+          answer:
+            'A very short transfer may look fast but carry a high risk and a large delay if missed. A slightly longer and more robust journey can therefore rank higher.'
+        },
+        {
+          question: 'What are risk time and the backup route?',
+          answer:
+            'Risk time estimates the expected time lost through possible connection problems. The backup shows an alternative that would likely be available after a missed connection.'
+        },
+        {
+          question: 'Are the results a guarantee or a ticket offer?',
+          answer:
+            'No. The values are data-based estimates and do not replace the operator’s live information. Tickets, prices and binding travel information remain with the relevant provider.'
+        }
+      ],
+      footerProject: 'A railway project by Julian Hermes.',
+      footerAria: 'Footer links',
+      copyright:
+        '© 2026 Julian Hermes. Data sources: imported historical railway data, Deutsche Bahn Web API, db-vendo-client/pyhafas.',
+      errors: {
+        missingFields: 'Please select a departure, destination and departure time.',
+        sameStation: 'Departure and destination must be different.',
+        noConnection:
+          'No suitable connection was found. Try a different time or another route.',
+        busy: 'A lot of people are searching right now. Please try again in a moment.',
+        timeout: 'The search is taking unusually long. Please try again.',
+        unavailable: 'Journey search is currently unavailable. Please try again later.',
+        requestFailed: 'The connection could not be loaded. Please try again.'
+      }
+    }
+  } as const;
+
+  type ErrorKey = keyof typeof copy.de.errors;
 
   let startingLocation = '';
   let endLocation = '';
@@ -36,18 +275,10 @@
   let loading = false;
   let loadingMessageIndex = 0;
   let loadingTimer: ReturnType<typeof setInterval> | undefined;
-  let errorMessage = '';
+  let errorKey: ErrorKey | '' = '';
   let journeyDetailsRef: HTMLElement;
 
-  const loadingMessages = [
-    'Live-Verbindungen werden abgefragt',
-    'Warten auf Anschlussreisende',
-    'Historische Verspaetungen werden verglichen',
-    'Anschluesse werden simuliert',
-    'Plan-B-Routen werden gesucht',
-    'Bordbistro beladen',
-    'Empfehlung wird sortiert'
-  ];
+  $: t = copy[$language];
 
   onMount(() => {
     const now = new Date();
@@ -63,7 +294,7 @@
     stopLoadingAnimation();
     loadingMessageIndex = 0;
     loadingTimer = setInterval(() => {
-      loadingMessageIndex = (loadingMessageIndex + 1) % loadingMessages.length;
+      loadingMessageIndex = (loadingMessageIndex + 1) % t.loadingMessages.length;
     }, 5200);
   }
 
@@ -94,10 +325,12 @@
 
   function transferLabel(leg: any) {
     const plannedLayover = Number(leg.planned_layover_minutes);
-    if (Number.isFinite(plannedLayover)) return `${Math.round(plannedLayover)} min Umstieg`;
+    if (Number.isFinite(plannedLayover)) {
+      return `${Math.round(plannedLayover)} ${t.minutesTransfer}`;
+    }
 
     const planned = minutesBetween(leg.planned_arrival, leg.planned_departure);
-    return `${planned} min Umstieg`;
+    return `${planned} ${t.minutesTransfer}`;
   }
 
   function connectionProbability(leg: any) {
@@ -107,9 +340,11 @@
   function connectionStatus(leg: any) {
     const probability = connectionProbability(leg);
 
-    if (!leg.layover_feasible || probability < 60) return { label: 'riskant', className: 'status-risk' };
-    if (probability < 85) return { label: 'knapp', className: 'status-ok' };
-    return { label: 'stabil', className: 'status-good' };
+    if (!leg.layover_feasible || probability < 60) {
+      return { label: t.statusRisk, className: 'status-risk' };
+    }
+    if (probability < 85) return { label: t.statusTight, className: 'status-ok' };
+    return { label: t.statusStable, className: 'status-good' };
   }
 
   function minutesLabel(value: unknown) {
@@ -127,22 +362,25 @@
   async function sendData() {
     loading = true;
     startLoadingAnimation();
-    errorMessage = '';
+    errorKey = '';
     data = undefined;
 
     if (!startingLocation || !endLocation || !time) {
-      errorMessage = 'Bitte Start, Ziel und Abfahrtszeit auswählen.';
+      errorKey = 'missingFields';
       loading = false;
       stopLoadingAnimation();
       return;
     }
 
     if (startingLocation === endLocation) {
-      errorMessage = 'Start und Ziel müssen unterschiedlich sein.';
+      errorKey = 'sameStation';
       loading = false;
       stopLoadingAnimation();
       return;
     }
+
+    const controller = new AbortController();
+    const requestTimeout = window.setTimeout(() => controller.abort(), 90000);
 
     try {
       const response = await fetch('/api/submit', {
@@ -155,26 +393,35 @@
           end_location: endLocation,
           time,
           only_regionalverkehr: onlyRegionalverkehr
-        })
+        }),
+        signal: controller.signal
       });
 
       if (!response.ok) {
-        throw new Error(`Backend returned ${response.status}`);
+        errorKey =
+          response.status === 429
+            ? 'busy'
+            : response.status >= 500
+              ? 'unavailable'
+              : 'requestFailed';
+        return;
       }
 
-      data = await response.json();
+      const payload = await response.json().catch(() => undefined);
+      data = payload;
 
       if (data?.journeys?.journeys?.length) {
         data.journeys.journeys.sort((a: any, b: any) =>
           Number(Boolean(b.best_journey)) - Number(Boolean(a.best_journey))
         );
       } else {
-        errorMessage = 'Keine Verbindung gefunden.';
+        errorKey = 'noConnection';
       }
     } catch (error) {
-      console.error('Error sending data:', error);
-      errorMessage = 'Die Route konnte nicht berechnet werden. Laufen Backend und MySQL noch?';
+      errorKey =
+        error instanceof DOMException && error.name === 'AbortError' ? 'timeout' : 'unavailable';
     } finally {
+      window.clearTimeout(requestTimeout);
       loading = false;
       stopLoadingAnimation();
     }
@@ -187,46 +434,43 @@
 </script>
 
 <svelte:head>
-  <title>OnPoint. | Routenplaner</title>
+  <title>{t.pageTitle}</title>
 </svelte:head>
 
 <main class="planner-shell">
   <section id="plan" class="planner-hero">
     <div class="hero-copy">
-      <p class="eyebrow">Historische Verspätungen. Klare Umstiege.</p>
-      <h1>OnPoint. findet die Route, die nicht nur schnell aussieht.</h1>
-      <p class="intro">
-        Vergleiche Bahnverbindungen nach Dauer, Umstiegen und historischen Anschlussrisiken.
-      </p>
+      <h1>{t.heroTitle}</h1>
+      <p class="intro">{t.heroIntro}</p>
     </div>
 
     <form class="planner-panel" onsubmit={(event) => { event.preventDefault(); sendData(); }}>
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">Route</p>
-          <h2>Verbindung suchen</h2>
+          <p class="eyebrow">{t.route}</p>
+          <h2>{t.searchConnection}</h2>
         </div>
       </div>
 
       <div class="route-grid">
         <label class="field">
-          <span>Start</span>
-          <select bind:value={startingLocation} aria-label="Startbahnhof">
-            <option value="" disabled>Startbahnhof</option>
+          <span>{t.start}</span>
+          <select bind:value={startingLocation} aria-label={t.startStation}>
+            <option value="" disabled>{t.startStation}</option>
             {#each stations as station}
               <option value={station}>{station}</option>
             {/each}
           </select>
         </label>
 
-        <button class="swap-button" type="button" onclick={swapStations} aria-label="Start und Ziel tauschen">
+        <button class="swap-button" type="button" onclick={swapStations} aria-label={t.swapStations}>
           ⇄
         </button>
 
         <label class="field">
-          <span>Ziel</span>
-          <select bind:value={endLocation} aria-label="Zielbahnhof">
-            <option value="" disabled>Zielbahnhof</option>
+          <span>{t.destination}</span>
+          <select bind:value={endLocation} aria-label={t.destinationStation}>
+            <option value="" disabled>{t.destinationStation}</option>
             {#each stations as station}
               <option value={station}>{station}</option>
             {/each}
@@ -235,29 +479,29 @@
       </div>
 
       <label class="field departure-field">
-        <span>Früheste Abfahrt</span>
+        <span>{t.earliestDeparture}</span>
         <input type="datetime-local" bind:value={time} />
       </label>
 
       <label class="regional-toggle">
         <input type="checkbox" bind:checked={onlyRegionalverkehr} />
-        <span>Nur Regionalverkehr</span>
-        <button class="help-bubble" type="button" aria-label="Erklärung Nur Regionalverkehr">
+        <span>{t.regionalOnly}</span>
+        <button class="help-bubble" type="button" aria-label={t.regionalHelp}>
           ?
-          <span class="tooltip">Schließt ICE, IC und EC aus und sucht nur Verbindungen mit Regionalverkehr, S-Bahn und ähnlichen Nahverkehrsangeboten.</span>
+          <span class="tooltip">{t.regionalTooltip}</span>
         </button>
       </label>
 
-      {#if errorMessage}
-        <div class="error-banner" role="alert">{errorMessage}</div>
+      {#if errorKey}
+        <div class="error-banner" role="alert">{t.errors[errorKey]}</div>
       {/if}
 
       <button class="primary-action" type="submit" disabled={loading}>
         {#if loading}
           <span class="loader"></span>
-          Analyse laeuft
+          {t.analysisRunning}
         {:else}
-          Beste Route finden
+          {t.findBestRoute}
         {/if}
       </button>
 
@@ -273,7 +517,7 @@
             </span>
           </div>
           {#key loadingMessageIndex}
-            <p>{loadingMessages[loadingMessageIndex]}</p>
+            <p>{t.loadingMessages[loadingMessageIndex]}</p>
           {/key}
         </div>
       {/if}
@@ -284,17 +528,17 @@
     <section id="results" class="results-section" bind:this={journeyDetailsRef}>
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Analyse</p>
-          <h2>Gefundene Optionen</h2>
+          <p class="eyebrow">{t.analysis}</p>
+          <h2>{t.foundOptions}</h2>
         </div>
         <div class="summary-strip">
           <div>
             <span>{data.journeys.journeys.length}</span>
-            <small>Optionen</small>
+            <small>{t.options}</small>
           </div>
           <div>
             <span>{data.journeys.sum_tracked_trains ?? 0}</span>
-            <small>getrackte Züge</small>
+            <small>{t.trackedTrains}</small>
           </div>
         </div>
       </div>
@@ -306,9 +550,9 @@
               <div class="option-main">
                 <div class="option-title">
                   {#if journey.best_journey}
-                    <span class="recommendation">Empfehlung</span>
+                    <span class="recommendation">{t.recommendation}</span>
                   {/if}
-                  <strong>Option {index + 1}</strong>
+                  <strong>{t.option} {index + 1}</strong>
                   <span>{journey.start_time} - {journey.end_time}</span>
                 </div>
 
@@ -321,27 +565,27 @@
 
               <div class="option-metrics">
                 <div>
-                  <small>Erfolg</small>
+                  <small>{t.success}</small>
                   <strong class={confidenceTone(journey.odds_of_successful_journey)}>{journey.odds_of_successful_journey} %</strong>
                 </div>
                 <div>
-                  <small>Dauer</small>
+                  <small>{t.duration}</small>
                   <strong>{journey.duration}</strong>
                 </div>
                 <div>
-                  <small>Erwartet</small>
+                  <small>{t.expected}</small>
                   <strong>{minutesLabel(journey.expected_total_cost_minutes)}</strong>
                 </div>
                 <div>
-                  <small>Umstiege</small>
+                  <small>{t.transfers}</small>
                   <strong>{journey.legs.length}</strong>
                 </div>
                 <div>
-                  <small>Risikozeit</small>
+                  <small>{t.riskTime}</small>
                   <strong>{signedMinutesLabel(journey.risk_cost_minutes)}</strong>
                 </div>
                 <div>
-                  <small>Startzug</small>
+                  <small>{t.firstTrain}</small>
                   <strong>{journey.start_train}</strong>
                 </div>
                 <span class="open-indicator">+</span>
@@ -352,9 +596,9 @@
               <div class="timeline-stop start">
                 <span class="node"></span>
                 <div>
-                  <small>Start</small>
+                  <small>{t.start}</small>
                   <strong>{startingLocation}</strong>
-                  <p>{journey.start_time} mit {journey.start_train}</p>
+                  <p>{journey.start_time} {t.with} {journey.start_train}</p>
                 </div>
               </div>
 
@@ -366,45 +610,66 @@
                     <div class="transfer-card">
                       <div class="transfer-card-head">
                         <div>
-                          <small>{transferLabel(leg)} · {connectionProbability(leg)} % Anschlusschance</small>
+                          <small
+                            >{transferLabel(leg)} · {connectionProbability(leg)} %
+                            {t.connectionChance}</small
+                          >
                           <strong>{leg.layover_at}</strong>
                         </div>
                         <span class={status.className}>{status.label}</span>
                       </div>
                       <div class="transfer-grid">
                         <div>
-                          <small>Ankunft geplant / erwartet</small>
+                          <small>{t.plannedExpectedArrival}</small>
                           <strong>{leg.planned_arrival} / {leg.expected_arrival}</strong>
                           <span>{leg.last_train}</span>
                         </div>
                         <div>
-                          <small>Weiterfahrt geplant / erwartet</small>
+                          <small>{t.plannedExpectedDeparture}</small>
                           <strong>{leg.planned_departure} / {leg.expected_departure}</strong>
                           <span>{leg.next_train}</span>
                         </div>
                         <div>
-                          <small>Datenpunkte</small>
+                          <small>{t.dataPoints}</small>
                           <strong>{Number(leg.last_train_tracked ?? 0) + Number(leg.next_train_tracked ?? 0)}</strong>
-                          <span>historische Treffer</span>
+                          <span>{t.historicalMatches}</span>
                         </div>
                       </div>
                       <div class="risk-details">
                         <div>
-                          <small>Risikokosten</small>
+                          <small>{t.riskCost}</small>
                           <strong>{signedMinutesLabel(leg.connection_risk_cost_minutes)}</strong>
-                          <span>{leg.connection_failure_probability} % Fehlschlag * {minutesLabel(leg.fallback_delay_minutes)} Plan-B-Verlust</span>
+                          <span
+                            >{leg.connection_failure_probability} % {t.failure} ×
+                            {minutesLabel(leg.fallback_delay_minutes)} {t.planBLoss}</span
+                          >
                         </div>
                         {#if leg.fallback_route}
                           <div>
-                            <small>Plan B wenn verpasst</small>
-                            <strong>{leg.fallback_route.departure_time} - {leg.fallback_route.arrival_time} mit {leg.fallback_route.start_train}</strong>
-                            <span>Suche ab {leg.fallback_search_time}, {leg.fallback_route.from} -> {leg.fallback_route.to}, {leg.fallback_route.transfers} Umstiege, {signedMinutesLabel(leg.fallback_route.extra_minutes)} gegenueber Original</span>
+                            <small>{t.planB}</small>
+                            <strong
+                              >{leg.fallback_route.departure_time} -
+                              {leg.fallback_route.arrival_time} {t.with}
+                              {leg.fallback_route.start_train}</strong
+                            >
+                            <span
+                              >{t.searchFrom} {leg.fallback_search_time},
+                              {leg.fallback_route.from} → {leg.fallback_route.to},
+                              {leg.fallback_route.transfers} {t.transfers.toLowerCase()},
+                              {signedMinutesLabel(leg.fallback_route.extra_minutes)}
+                              {t.comparedWithOriginal}</span
+                            >
                           </div>
                         {:else}
                           <div>
-                            <small>Plan B wenn verpasst</small>
-                            <strong>Keine belastbare Alternative gefunden</strong>
-                            <span>Suche ab {leg.fallback_search_time}. Fuer den Score wird ein Default-Verlust von {minutesLabel(leg.fallback_delay_minutes)} verwendet.</span>
+                            <small>{t.planB}</small>
+                            <strong>{t.noReliableAlternative}</strong>
+                            <span
+                              >{t.searchFrom} {leg.fallback_search_time}.
+                              {t.fallbackDefaultBefore}
+                              {minutesLabel(leg.fallback_delay_minutes)}
+                              {t.fallbackDefaultAfter}</span
+                            >
                           </div>
                         {/if}
                       </div>
@@ -415,7 +680,7 @@
                 <div class="timeline-transfer">
                   <span class="node"></span>
                   <div class="transfer-card">
-                    <strong>Direktverbindung ohne Umstieg</strong>
+                    <strong>{t.directConnection}</strong>
                   </div>
                 </div>
               {/if}
@@ -423,9 +688,9 @@
               <div class="timeline-stop end">
                 <span class="node"></span>
                 <div>
-                  <small>Ziel</small>
+                  <small>{t.destination}</small>
                   <strong>{endLocation}</strong>
-                  <p>Ankunft {journey.end_time}</p>
+                  <p>{t.arrival} {journey.end_time}</p>
                 </div>
               </div>
             </div>
@@ -439,35 +704,17 @@
     <div class="section-heading">
       <div>
         <p class="eyebrow">FAQ</p>
-        <h2>Häufige Fragen</h2>
+        <h2>{t.faqTitle}</h2>
       </div>
     </div>
 
     <div class="faq-list">
-      <details>
-        <summary>Wie findet OnPoint. die Verbindungen?<span>+</span></summary>
-        <p>OnPoint. sucht aktuelle Bahnverbindungen und bewertet die Umstiege anschließend mit historischen Verspätungsdaten.</p>
-      </details>
-      <details>
-        <summary>Was bedeutet die Anschlusschance?<span>+</span></summary>
-        <p>Die Anschlusschance schätzt, wie wahrscheinlich ein Umstieg klappt. Dafür werden beobachtete Ankunfts- und Abfahrtsverspätungen ähnlicher Züge verglichen.</p>
-      </details>
-      <details>
-        <summary>Warum wird nicht immer die schnellste Route empfohlen?<span>+</span></summary>
-        <p>Die Empfehlung achtet nicht nur auf die reine Fahrzeit. Ein kurzer, aber riskanter Anschluss kann schlechter sein als eine etwas ruhigere Verbindung.</p>
-      </details>
-      <details>
-        <summary>Was bedeutet Risikozeit?<span>+</span></summary>
-        <p>Risikozeit zeigt, wie stark ein verpasster Anschluss die Reise voraussichtlich verzögern würde. Wenn schnell ein guter Plan B existiert, bleibt dieser Wert niedrig.</p>
-      </details>
-      <details>
-        <summary>Was ist der Plan B?<span>+</span></summary>
-        <p>Bei riskanten Umstiegen sucht OnPoint. eine mögliche Alternative ab dem Umstiegsbahnhof. So sehen Sie, was wahrscheinlich passiert, falls der Anschluss nicht klappt.</p>
-      </details>
-      <details>
-        <summary>Kann ich direkt ein Ticket kaufen?<span>+</span></summary>
-        <p>Noch nicht direkt in OnPoint. Preise, Verfügbarkeit und Buchung bleiben bei der Deutschen Bahn oder dem jeweiligen Anbieter.</p>
-      </details>
+      {#each t.faq as item}
+        <details>
+          <summary>{item.question}<span>+</span></summary>
+          <p>{item.answer}</p>
+        </details>
+      {/each}
     </div>
   </section>
 
@@ -477,17 +724,17 @@
         <img src="/onpoint-logo.svg" alt="" />
         <div>
           <strong>OnPoint.</strong>
-          <p>Ein Bahnprojekt von Julian Hermes.</p>
+          <p>{t.footerProject}</p>
         </div>
       </div>
-      <nav class="footer-links" aria-label="Footer links">
+      <nav class="footer-links" aria-label={t.footerAria}>
         <a class="primary-link" href="https://juhermes.de" target="_blank" rel="noreferrer">juhermes.de</a>
         <a class="primary-link" href="https://github.com/Avonik" target="_blank" rel="noreferrer">GitHub</a>
         <a href="https://www.bahn.de/" target="_blank" rel="noreferrer">Deutsche Bahn</a>
         <a href="https://github.com/public-transport/db-vendo-client" target="_blank" rel="noreferrer">db-vendo-client</a>
         <a href="https://github.com/FahrplanDatenGarten/pyhafas" target="_blank" rel="noreferrer">pyhafas</a>
       </nav>
-      <p class="copyright">© 2026 Julian Hermes. Datenquellen: importierte historische Bahn-Dumps, Deutsche Bahn Web API, db-vendo-client/pyhafas.</p>
+      <p class="copyright">{t.copyright}</p>
     </div>
   </footer>
 </main>
