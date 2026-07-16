@@ -13,9 +13,15 @@ def resolve_javascript_runtime(project_dir):
         return configured_runtime
 
     project_dir = Path(project_dir).resolve()
-    bundled_bun = project_dir / "my-app" / "node_modules" / "bun" / "bin" / "bun.exe"
-    if bundled_bun.is_file():
-        return str(bundled_bun)
+    bundled_candidates = [
+        project_dir / "my-app" / "node_modules" / "bun" / "bin" / "bun.exe",
+        project_dir / "my-app" / "node_modules" / "bun" / "bin" / "bun",
+        project_dir / "my-app" / "node_modules" / ".bin" / "bun.exe",
+        project_dir / "my-app" / "node_modules" / ".bin" / "bun",
+    ]
+    for bundled_bun in bundled_candidates:
+        if bundled_bun.is_file():
+            return str(bundled_bun)
 
     system_bun = shutil.which("bun")
     if system_bun:

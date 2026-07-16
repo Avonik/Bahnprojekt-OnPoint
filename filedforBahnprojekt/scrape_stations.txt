@@ -1,0 +1,35 @@
+# Planner endpoints
+Braunschweig Hbf
+Bremen Hbf
+Celle
+Emden Hbf
+Göttingen
+Hamburg Hbf
+Hamburg-Harburg
+Hameln
+Hannover Hbf
+Hildesheim Hbf
+Kiel Hbf
+Leer(Ostfriesl)
+Lingen(Ems)
+Lüneburg
+Magdeburg Hbf
+Minden(Westf)
+Münster(Westf) Hbf
+Nienburg(Weser)
+Oldenburg(Oldb)Hbf
+Osnabrück Hbf
+Rheine
+Stendal Hbf
+Uelzen
+Wolfsburg Hbf
+
+# Frequently used transfer stations
+Hamm(Westf)Hbf
+Löhne(Westf)
+Paderborn Hbf
+Altenbeken
+Lehrte
+Verden(Aller)
+Rotenburg(Wümme)
+Herford

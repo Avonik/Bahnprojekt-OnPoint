@@ -169,6 +169,7 @@ def run_analysis(data):
 
             for leg in journey["legs"]:
                 origin_station = leg["origin"]
+                origin_station_id = leg.get("origin_id") or ""
                 departure_time = leg["departure"]
                 arrival_time = leg["arrival"]
                 train = leg["name"]
@@ -177,21 +178,31 @@ def run_analysis(data):
                 arrival_time_formatted = format_time(arrival_time)
 
                 if last_exp_arrival is not None:
-                    arrival_cache_key = (last_train_lookup_name, origin_station)
+                    arrival_cache_key = (
+                        last_train_lookup_name,
+                        origin_station_id,
+                        origin_station,
+                    )
                     if arrival_cache_key not in arrival_delay_cache:
                         arrival_delay_cache[arrival_cache_key] = get_all_arrival_delays(
                             cursor,
                             last_train_lookup_name,
                             origin_station,
+                            origin_station_id,
                         )
                     all_last_arrival_delays = arrival_delay_cache[arrival_cache_key]
 
-                    departure_cache_key = (train_lookup_name, origin_station)
+                    departure_cache_key = (
+                        train_lookup_name,
+                        origin_station_id,
+                        origin_station,
+                    )
                     if departure_cache_key not in departure_delay_cache:
                         departure_delay_cache[departure_cache_key] = get_all_departure_delays(
                             cursor,
                             train_lookup_name,
                             origin_station,
+                            origin_station_id,
                         )
                     all_next_departure_delays = departure_delay_cache[departure_cache_key]
                     planned_layover_minutes = (departure_time - last_plan_arrival).total_seconds() / 60
@@ -268,6 +279,16 @@ def run_analysis(data):
                             "simulated_cases": connection_estimate.simulated_cases,
                             "effective_sample_size": round(connection_estimate.effective_sample_size, 1),
                             "expected_miss_lateness_minutes": round(connection_estimate.expected_miss_lateness_minutes, 1),
+                            "arrival_cancellations": connection_estimate.arrival_cancellations,
+                            "departure_cancellations": connection_estimate.departure_cancellations,
+                            "arrival_cancellation_probability": round(
+                                connection_estimate.arrival_cancellation_probability * 100,
+                                2,
+                            ),
+                            "departure_cancellation_probability": round(
+                                connection_estimate.departure_cancellation_probability * 100,
+                                2,
+                            ),
                         },
                         "_fallback_future": fallback_future,
                         "_failure_probability": connection_estimate.failure_probability,
@@ -737,7 +758,9 @@ def normalize_db_vendo_payload(payload):
 
             normalized_legs.append({
                 "origin": leg.get("origin", "N/A"),
+                "origin_id": str(leg.get("origin_id") or ""),
                 "destination": leg.get("destination", "N/A"),
+                "destination_id": str(leg.get("destination_id") or ""),
                 "departure": departure,
                 "arrival": arrival,
                 "name": leg["name"],
@@ -790,7 +813,9 @@ def fetch_pyhafas_journeys(starting_location, end_location, time_obj, include_lo
 
             normalized_legs.append({
                 "origin": leg.origin.name,
+                "origin_id": str(getattr(leg.origin, "id", "") or ""),
                 "destination": leg.destination.name,
+                "destination_id": str(getattr(leg.destination, "id", "") or ""),
                 "departure": leg.departure,
                 "arrival": leg.arrival,
                 "name": leg.name,
@@ -853,7 +878,9 @@ def fetch_transport_rest_journeys(starting_location, end_location, time_obj, inc
 
             normalized_legs.append({
                 "origin": (leg.get("origin") or {}).get("name", "N/A"),
+                "origin_id": str((leg.get("origin") or {}).get("id") or ""),
                 "destination": (leg.get("destination") or {}).get("name", "N/A"),
+                "destination_id": str((leg.get("destination") or {}).get("id") or ""),
                 "departure": departure,
                 "arrival": arrival,
                 "name": train_name,
@@ -953,57 +980,108 @@ def train_name_filter(train):
 
     return "trains.train_name = %s", [train]
 
-def get_all_arrival_delays(cursor, train, station):
+
+def station_name_candidates(station):
+    station = repair_text_encoding(station or "").strip()
+    candidates = {station}
+
+    if station.endswith("Hbf"):
+        candidates.add(re.sub(r"\s+Hbf$", "Hbf", station))
+        candidates.add(re.sub(r"(?<!\s)Hbf$", " Hbf", station))
+
+    oldenburg_names = {"Oldenburg(Oldb)", "Oldenburg(Oldb)Hbf", "Oldenburg(Oldb) Hbf"}
+    if station in oldenburg_names:
+        candidates.update(oldenburg_names)
+
+    return sorted(candidate for candidate in candidates if candidate)
+
+
+def station_lookup_filter(station, provider_station_id=None):
+    candidates = station_name_candidates(station)
+    placeholders = ", ".join(["%s"] * len(candidates))
+    clauses = [f"stations.station_name IN ({placeholders})"]
+    params = list(candidates)
+
+    if provider_station_id:
+        clauses.insert(0, "stations.provider_station_id = %s")
+        params.insert(0, str(provider_station_id))
+
+    return "(" + " OR ".join(clauses) + ")", params
+
+
+def get_all_arrival_delays(cursor, train, station, provider_station_id=None):
     train_filter, train_params = train_name_filter(train)
+    station_filter, station_params = station_lookup_filter(
+        station,
+        provider_station_id,
+    )
     query = """
         WITH RankedArrivals AS (
         SELECT
             arrivals.*,
             stations.station_name,
             trains.train_name,
-            ROW_NUMBER() OVER (PARTITION BY arrivals.trip_id ORDER BY arrivals.arrival_id DESC) AS rn
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    arrivals.station_id,
+                    arrivals.trip_id,
+                    arrivals.planned_arrival_date,
+                    arrivals.planned_arrival
+                ORDER BY arrivals.arrival_id DESC
+            ) AS rn
         FROM arrivals
         JOIN stations ON arrivals.station_id = stations.station_id
         JOIN trains ON arrivals.train_id = trains.train_id
         WHERE """ + train_filter + """
-          AND stations.station_name = %s
+          AND """ + station_filter + """
           AND arrivals.trip_id IS NOT NULL
           AND arrivals.trip_id <> ''
         )
-        SELECT delay_minutes
+        SELECT delay_minutes, cancelled
         FROM RankedArrivals
         WHERE rn = 1;
     """
     try:
-        cursor.execute(query, train_params + [station])
+        cursor.execute(query, train_params + station_params)
         return cursor.fetchall()
     except mysql.connector.Error as error:
         print(f'Arrival delay lookup skipped for {train} at {station}: {error}')
         return []
 
-def get_all_departure_delays(cursor, train, station):
+def get_all_departure_delays(cursor, train, station, provider_station_id=None):
     train_filter, train_params = train_name_filter(train)
+    station_filter, station_params = station_lookup_filter(
+        station,
+        provider_station_id,
+    )
     query = """
         WITH RankedDepartures AS (
     SELECT
         departures.*,
         stations.station_name,
         trains.train_name,
-        ROW_NUMBER() OVER (PARTITION BY departures.trip_id ORDER BY departures.departure_id DESC) AS rn
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                departures.station_id,
+                departures.trip_id,
+                departures.planned_departure_date,
+                departures.planned_departure
+            ORDER BY departures.departure_id DESC
+        ) AS rn
     FROM departures
     JOIN stations ON departures.station_id = stations.station_id
     JOIN trains ON departures.train_id = trains.train_id
     WHERE """ + train_filter + """
-      AND stations.station_name = %s
+      AND """ + station_filter + """
       AND departures.trip_id IS NOT NULL
       AND departures.trip_id <> ''
     )
-    SELECT delay_minutes
+    SELECT delay_minutes, cancelled
     FROM RankedDepartures
     WHERE rn = 1;
     """
     try:
-        cursor.execute(query, train_params + [station])
+        cursor.execute(query, train_params + station_params)
         return cursor.fetchall()
     except mysql.connector.Error as error:
         print(f'Departure delay lookup skipped for {train} at {station}: {error}')
@@ -1020,7 +1098,14 @@ def grab_EV_arrival(train, station, last_plan_arrival):
             arrivals.*,
             stations.station_name,
             trains.train_name,
-            ROW_NUMBER() OVER (PARTITION BY arrivals.trip_id ORDER BY arrivals.arrival_id DESC) AS rn
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    arrivals.station_id,
+                    arrivals.trip_id,
+                    arrivals.planned_arrival_date,
+                    arrivals.planned_arrival
+                ORDER BY arrivals.arrival_id DESC
+            ) AS rn
         FROM arrivals
         JOIN stations ON arrivals.station_id = stations.station_id
         JOIN trains ON arrivals.train_id = trains.train_id
@@ -1058,7 +1143,14 @@ def grab_EV_departure(train, station, departure_time):
                 departures.*,
                 stations.station_name,
                 trains.train_name,
-                ROW_NUMBER() OVER (PARTITION BY departures.trip_id ORDER BY departures.departure_id DESC) AS rn
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    departures.station_id,
+                    departures.trip_id,
+                    departures.planned_departure_date,
+                    departures.planned_departure
+                ORDER BY departures.departure_id DESC
+            ) AS rn
             FROM departures
             JOIN stations ON departures.station_id = stations.station_id
             JOIN trains ON departures.train_id = trains.train_id

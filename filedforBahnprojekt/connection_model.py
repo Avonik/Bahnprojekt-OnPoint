@@ -21,20 +21,41 @@ class ConnectionEstimate:
     effective_sample_size: float
     arrival_samples: int
     departure_samples: int
+    arrival_cancellations: int
+    departure_cancellations: int
+    arrival_cancellation_probability: float
+    departure_cancellation_probability: float
     simulated_cases: int
     method: str
 
 
 def normalize_delay_rows(rows):
     delays = []
+    cancellations = 0
+    samples = 0
 
     for row in rows or []:
-        value = row[0] if isinstance(row, (tuple, list)) else row
+        if isinstance(row, (tuple, list)):
+            value = row[0] if row else None
+            cancelled = bool(row[1]) if len(row) > 1 else False
+        else:
+            value = row
+            cancelled = False
+
+        samples += 1
+        if cancelled:
+            cancellations += 1
+            continue
         if value is None:
             continue
         delays.append(float(value))
 
-    return delays
+    return {
+        "delays": delays,
+        "cancellations": cancellations,
+        "samples": samples,
+        "cancellation_probability": cancellations / samples if samples else 0.0,
+    }
 
 
 def expected_delay(delays):
@@ -125,15 +146,24 @@ def estimate_connection(
     prior_probability=DEFAULT_PRIOR_SUCCESS_PROBABILITY,
     smoothing_strength=DEFAULT_SMOOTHING_STRENGTH,
 ):
-    arrival_delays = normalize_delay_rows(arrival_delay_rows)
-    departure_delays = normalize_delay_rows(departure_delay_rows)
+    arrival_data = normalize_delay_rows(arrival_delay_rows)
+    departure_data = normalize_delay_rows(departure_delay_rows)
+    arrival_delays = arrival_data["delays"]
+    departure_delays = departure_data["delays"]
     empirical_result = empirical_success_probability(
         arrival_delays,
         departure_delays,
         scheduled_layover_minutes,
     )
-    raw_probability = empirical_result["raw_probability"]
-    sample_size = effective_sample_size(len(arrival_delays), len(departure_delays))
+    operating_probability = (
+        (1.0 - arrival_data["cancellation_probability"])
+        * (1.0 - departure_data["cancellation_probability"])
+    )
+    raw_probability = empirical_result["raw_probability"] * operating_probability
+    sample_size = effective_sample_size(
+        arrival_data["samples"],
+        departure_data["samples"],
+    )
     probability = smooth_probability(
         raw_probability,
         sample_size,
@@ -153,8 +183,16 @@ def estimate_connection(
         conditional_missed_departure_delay_minutes=empirical_result["missed_departure_delay"],
         expected_miss_lateness_minutes=empirical_result["miss_lateness"],
         effective_sample_size=sample_size,
-        arrival_samples=len(arrival_delays),
-        departure_samples=len(departure_delays),
+        arrival_samples=arrival_data["samples"],
+        departure_samples=departure_data["samples"],
+        arrival_cancellations=arrival_data["cancellations"],
+        departure_cancellations=departure_data["cancellations"],
+        arrival_cancellation_probability=arrival_data["cancellation_probability"],
+        departure_cancellation_probability=departure_data["cancellation_probability"],
         simulated_cases=empirical_result["simulated_cases"],
-        method=empirical_result["method"],
+        method=(
+            f"{empirical_result['method']}_with_cancellations"
+            if arrival_data["cancellations"] or departure_data["cancellations"]
+            else empirical_result["method"]
+        ),
     )

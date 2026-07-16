@@ -1,0 +1,17 @@
+[Unit]
+Description=OnPoint historical train event scraper
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/BahnProjekt/filedforBahnprojekt
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/BahnProjekt/.venv/bin/python scrape_train_data.py --stations-file scrape_stations.txt --interval 600
+Restart=always
+RestartSec=20
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

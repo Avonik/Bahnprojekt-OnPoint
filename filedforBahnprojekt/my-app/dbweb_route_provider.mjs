@@ -90,8 +90,13 @@ const resolveStation = async (query) => {
 	const exactMatch = exact.get(normalizedQuery);
 	if (exactMatch) return exactMatch;
 
-	const partialMatch = stations.find(({normalizedName}) => normalizedName.includes(normalizedQuery));
-	if (partialMatch) return partialMatch.station;
+	const hbfMatch = exact.get(`${normalizedQuery} hbf`);
+	if (hbfMatch) return hbfMatch;
+
+	const partialMatches = stations
+		.filter(({normalizedName}) => normalizedName.includes(normalizedQuery))
+		.sort((left, right) => left.normalizedName.length - right.normalizedName.length);
+	if (partialMatches[0]) return partialMatches[0].station;
 
 	const locations = await client.locations(repairedQuery, {
 		results: 1,
@@ -110,6 +115,13 @@ const findStation = (query) => {
 };
 
 const stationName = (station) => station?.name || 'N/A';
+const stationId = (station) => String(
+	station?.id
+	|| station?.evaNr
+	|| station?.evaNumber
+	|| station?.locationId
+	|| ''
+);
 
 const formatTrainDisplayName = (vehicle) => {
 	const label = vehicle.mittelText || vehicle.kurzText || vehicle.langText || vehicle.name || vehicle.nummer || vehicle.linienNummer;
@@ -143,11 +155,11 @@ const fetchDbnavJourneys = async (from, to, departureIso, includeLongDistance, r
 			regionalExpress: true,
 			regional: true,
 			suburban: true,
-			bus: true,
-			ferry: true,
-			subway: true,
-			tram: true,
-			taxi: true,
+			bus: false,
+			ferry: false,
+			subway: false,
+			tram: false,
+			taxi: false,
 		},
 	});
 
@@ -164,7 +176,9 @@ const fetchDbnavJourneys = async (from, to, departureIso, includeLongDistance, r
 				name: trainName,
 				match_name: matchName,
 				origin: stationName(leg.origin),
+				origin_id: stationId(leg.origin),
 				destination: stationName(leg.destination),
+				destination_id: stationId(leg.destination),
 				departure,
 				arrival,
 			});
@@ -175,8 +189,8 @@ const fetchDbnavJourneys = async (from, to, departureIso, includeLongDistance, r
 
 const fetchDbwebJourneys = async (from, to, departureIso, includeLongDistance, results) => {
 	const productgattungen = includeLongDistance
-		? ['ICE', 'EC_IC', 'IR', 'REGIONAL', 'SBAHN', 'BUS', 'SCHIFF', 'UBAHN', 'TRAM', 'ANRUFPFLICHTIG']
-		: ['REGIONAL', 'SBAHN', 'BUS', 'SCHIFF', 'UBAHN', 'TRAM', 'ANRUFPFLICHTIG'];
+		? ['ICE', 'EC_IC', 'IR', 'REGIONAL', 'SBAHN']
+		: ['REGIONAL', 'SBAHN'];
 	const body = {
 		minUmstiegszeit: 0,
 		deutschlandTicketVorhanden: false,
@@ -186,7 +200,7 @@ const fetchDbwebJourneys = async (from, to, departureIso, includeLongDistance, r
 		sitzplatzOnly: false,
 		abfahrtsHalt: `A=1@L=${from.id}@`,
 		ankunftsHalt: `A=1@L=${to.id}@`,
-		produktgattungen,
+		produktgattungen: productgattungen,
 		bikeCarriage: false,
 		anfrageZeitpunkt: departureIso.slice(0, 19),
 		ankunftSuche: 'ABFAHRT',
@@ -224,7 +238,9 @@ const fetchDbwebJourneys = async (from, to, departureIso, includeLongDistance, r
 				name: trainName,
 				match_name: matchName,
 				origin: section.abfahrtsOrt || section.startHalt?.name,
+				origin_id: stationId(section.startHalt || section.abfahrt),
 				destination: section.ankunftsOrt || section.zielHalt?.name,
+				destination_id: stationId(section.zielHalt || section.ankunft),
 				departure,
 				arrival,
 			});
