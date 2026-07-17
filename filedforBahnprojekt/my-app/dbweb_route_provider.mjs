@@ -168,7 +168,10 @@ const fetchDbnavJourneys = async (from, to, departureIso, includeLongDistance, r
 		for (const leg of journey.legs || []) {
 			if (leg.walking || leg.transfer) continue;
 			const trainName = formatClientTrainDisplayName(leg.line, leg.tripId);
-			const matchName = leg.line?.fahrtNr || leg.line?.name || trainName;
+			// The station-board scraper stores line.name. Prefer the same value
+			// here; fahrtNr is often an internal operating number for regional
+			// services and therefore does not match the historical train name.
+			const matchName = leg.line?.name || trainName || leg.line?.fahrtNr;
 			const departure = leg.plannedDeparture || leg.departure;
 			const arrival = leg.plannedArrival || leg.arrival;
 			if (!trainName || !matchName || !departure || !arrival) continue;
@@ -230,7 +233,13 @@ const fetchDbwebJourneys = async (from, to, departureIso, includeLongDistance, r
 		for (const section of connection.verbindungsAbschnitte || []) {
 			const vehicle = section.verkehrsmittel || {};
 			const trainName = formatTrainDisplayName(vehicle);
-			const matchName = vehicle.nummer || vehicle.name || vehicle.linienNummer || trainName;
+			const matchName = vehicle.mittelText
+				|| vehicle.kurzText
+				|| vehicle.langText
+				|| vehicle.name
+				|| vehicle.linienNummer
+				|| trainName
+				|| vehicle.nummer;
 			const departure = section.abfahrt?.sollzeit || section.startHalt?.abfahrt?.sollzeit;
 			const arrival = section.ankunft?.sollzeit || section.zielHalt?.ankunft?.sollzeit;
 			if (!trainName || !matchName || !departure || !arrival) continue;

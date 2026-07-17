@@ -82,9 +82,6 @@ def db_config():
     }
 
 
-db = mysql.connector.connect(**db_config())
-cursor = db.cursor()
-
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -148,6 +145,11 @@ def run_analysis(data):
         return_provider=True,
     )
 
+    # Do not keep a module-level database connection open. MariaDB closes idle
+    # sessions after wait_timeout; reusing that stale cursor made every lookup
+    # return an empty sample set until the backend service was restarted.
+    analysis_db = mysql.connector.connect(**db_config())
+    analysis_cursor = analysis_db.cursor()
     fallback_executor = FallbackBatchExecutor(route_provider, FALLBACK_ROUTE_WORKERS)
     try:
         for journey in journeys:
@@ -185,7 +187,7 @@ def run_analysis(data):
                     )
                     if arrival_cache_key not in arrival_delay_cache:
                         arrival_delay_cache[arrival_cache_key] = get_all_arrival_delays(
-                            cursor,
+                            analysis_cursor,
                             last_train_lookup_name,
                             origin_station,
                             origin_station_id,
@@ -199,7 +201,7 @@ def run_analysis(data):
                     )
                     if departure_cache_key not in departure_delay_cache:
                         departure_delay_cache[departure_cache_key] = get_all_departure_delays(
-                            cursor,
+                            analysis_cursor,
                             train_lookup_name,
                             origin_station,
                             origin_station_id,
@@ -312,7 +314,11 @@ def run_analysis(data):
             )
             resultJSON["journeys"].append(journey_data)
     finally:
-        fallback_executor.shutdown(wait=True)
+        try:
+            fallback_executor.shutdown(wait=True)
+        finally:
+            analysis_cursor.close()
+            analysis_db.close()
 
     for idx, journey_data in enumerate(resultJSON["journeys"]):
         risk_cost_minutes = 0.0
@@ -1045,8 +1051,8 @@ def get_all_arrival_delays(cursor, train, station, provider_station_id=None):
         cursor.execute(query, train_params + station_params)
         return cursor.fetchall()
     except mysql.connector.Error as error:
-        print(f'Arrival delay lookup skipped for {train} at {station}: {error}')
-        return []
+        print(f'Arrival delay lookup failed for {train} at {station}: {error}')
+        raise
 
 def get_all_departure_delays(cursor, train, station, provider_station_id=None):
     train_filter, train_params = train_name_filter(train)
@@ -1084,10 +1090,10 @@ def get_all_departure_delays(cursor, train, station, provider_station_id=None):
         cursor.execute(query, train_params + station_params)
         return cursor.fetchall()
     except mysql.connector.Error as error:
-        print(f'Departure delay lookup skipped for {train} at {station}: {error}')
-        return []
+        print(f'Departure delay lookup failed for {train} at {station}: {error}')
+        raise
 
-def grab_EV_arrival(train, station, last_plan_arrival):
+def grab_EV_arrival(cursor, train, station, last_plan_arrival):
     average_arrival_delay = 0
     train_tracked = 0
     expected_arrival_formatted = format_time(last_plan_arrival)
@@ -1132,7 +1138,7 @@ def grab_EV_arrival(train, station, last_plan_arrival):
         expected_arrival_formatted = format_time(expected_arrival)
     return train_tracked, expected_arrival_formatted, average_arrival_delay
 
-def grab_EV_departure(train, station, departure_time):
+def grab_EV_departure(cursor, train, station, departure_time):
     average_departure_delay = 0
     train_tracked = 0
     expected_departure_formatted = format_time(departure_time)
