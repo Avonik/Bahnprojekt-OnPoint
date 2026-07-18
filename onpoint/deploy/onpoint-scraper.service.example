@@ -6,7 +6,7 @@ After=network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/BahnProjekt/filedforBahnprojekt
+WorkingDirectory=/home/pi/BahnProjekt/onpoint
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/pi/BahnProjekt/.venv/bin/python scrape_train_data.py --stations-file scrape_stations.txt --interval 600
 Restart=always

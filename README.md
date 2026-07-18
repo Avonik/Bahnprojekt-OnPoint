@@ -1,101 +1,222 @@
 # OnPoint.
 
-Journey planner for German train routes with historical transfer reliability, expected delay simulation, and Plan-B route estimates.
+**A journey planner for German rail routes that looks beyond the scheduled travel time.**
 
-## Project Layout
+OnPoint combines current timetable data with historical delays and cancellations. It estimates whether each transfer is likely to work, checks the next usable connection when it does not, and ranks route alternatives by their expected total travel cost.
 
-- `filedforBahnprojekt/backend.py` - Flask API and route scoring.
-- `filedforBahnprojekt/scrape_train_data.py` - station-board scraper for historical MySQL data.
-- `filedforBahnprojekt/migrate_train_db.py` - idempotent MySQL migration for compact event UPSERTs.
-- `filedforBahnprojekt/scrape_stations.txt` - Raspberry Pi scrape station set.
-- `filedforBahnprojekt/compact_train_db.py` - optional one-time removal of old duplicate snapshots.
-- `filedforBahnprojekt/connection_model.py` - statistical transfer model.
-- `filedforBahnprojekt/my-app/` - SvelteKit frontend.
+[Live demo](https://bahn.juhermes.de) · [Frontend documentation](onpoint/my-app/README.md)
 
-## DB API runtime
+<!-- Screenshot placeholder
 
-DB currently blocks the TLS/network fingerprint used by Node for the Vendo
-endpoints. Install the frontend dependencies with `npm install`; they include a
-platform-specific Bun runtime that the Python backend and scraper select when
-`NODE_EXECUTABLE=auto` (the default). Bun's npm package supports Linux ARM64 for
-64-bit Raspberry Pi installations. Set `NODE_EXECUTABLE` to an explicit binary
-path only when an override is required.
+Add a wide screenshot of the route comparison here, for example:
 
-Long routes analyze six complete alternatives by default (`MAX_ROUTE_RESULTS`).
-Every transfer still receives an exact Plan-B lookup; these lookups run with
-bounded parallelism (`FALLBACK_ROUTE_WORKERS`, default: `3`) and identical
-requests are reused within the analysis. All Plan-B lookups of one analysis
-share a single Bun process so the DB client and station index are loaded once.
+![OnPoint route comparison](docs/images/route-comparison.png)
 
-The Flask reloader is disabled by default (`FLASK_DEBUG=false`). Production
-deployments should run `backend:app` through Gunicorn instead of Flask's
-development server.
+Recommended: 1600 × 900 px, showing multiple alternatives and one expanded transfer analysis.
+-->
+
+## Why OnPoint?
+
+The connection with the shortest scheduled duration is not always the best one. A tight transfer can save a few minutes on paper but cause a much larger delay when it is missed.
+
+OnPoint makes that trade-off visible. For every route alternative it considers:
+
+- scheduled journey duration;
+- historical arrival and departure delays;
+- known train cancellations;
+- the probability of completing each transfer;
+- the additional delay caused by the next usable Plan B;
+- a configurable comfort penalty for every transfer.
+
+The result is a recommendation based on expected travel cost rather than scheduled duration alone.
+
+## How it works
+
+1. The scraper collects repeated arrival and departure observations for 32 selected stations and stores the latest reliable state of every train event in MySQL.
+2. The backend requests current journey alternatives from Deutsche Bahn routing providers.
+3. For each transfer, the statistical model compares historical arrival and departure delay distributions and includes observed cancellations.
+4. OnPoint searches for the next usable connection after a potentially missed transfer.
+5. The alternatives are ranked using:
+
+   ```text
+   expected total cost
+     = scheduled duration
+     + transfer comfort penalties
+     + Σ(miss probability × Plan-B delay)
+   ```
+
+The displayed probabilities are estimates based on the available historical sample. They are useful for comparing routes, but they are not guarantees for an individual journey.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    DBAPI["Deutsche Bahn data providers"] --> Scraper["Python scraper"]
+    Scraper --> Database[("MySQL / MariaDB")]
+    DBAPI --> Backend["Flask analysis API"]
+    Database --> Backend
+    Backend --> Model["Transfer reliability model"]
+    Model --> Backend
+    Backend --> Frontend["SvelteKit frontend"]
+```
+
+The scraper and API are designed to run independently. The included systemd examples deploy both services on a Raspberry Pi, while Gunicorn serves the Flask application behind a reverse proxy.
+
+## Features
+
+- comparison of up to six complete route alternatives;
+- empirical transfer probabilities with Bayesian smoothing for small samples;
+- cancellation-aware historical analysis;
+- exact Plan-B lookup for every transfer;
+- bounded parallel Plan-B requests with per-analysis caching;
+- German and English user interface;
+- regional-train-only routing option;
+- compact, idempotent historical event storage;
+- scraper health records and configurable retention;
+- responsive SvelteKit interface.
+
+## Technology
+
+- **Frontend:** SvelteKit, TypeScript, Tailwind CSS, DaisyUI
+- **Backend:** Python, Flask, Gunicorn
+- **Data:** MySQL/MariaDB
+- **Routing:** db-vendo-client, pyhafas and transport.rest fallback
+- **Runtime:** Bun for the DB Web provider integration
+- **Deployment:** Raspberry Pi and systemd
+
+## Repository layout
+
+```text
+onpoint/
+├── backend.py                 # Flask API and route scoring
+├── connection_model.py        # Statistical transfer model
+├── scrape_train_data.py       # Historical station-board scraper
+├── migrate_train_db.py        # Idempotent database migration
+├── compact_train_db.py        # Optional snapshot compaction
+├── scrape_stations.txt        # Scraped station set
+├── deploy/                    # Example systemd services
+├── tests/                     # Python tests
+└── my-app/                    # SvelteKit frontend
+```
+
+## Local development
+
+### Requirements
+
+- Python 3.11 or newer;
+- Node.js and npm;
+- MySQL or MariaDB;
+- access to the configured routing provider.
+
+### Installation
+
+Create a virtual environment at the repository root and install the backend dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r onpoint/requirements.txt
+```
+
+On Windows PowerShell, activate it with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Install the frontend dependencies:
+
+```bash
+cd onpoint/my-app
+npm ci
+```
+
+The npm dependencies include a platform-specific Bun runtime. With `NODE_EXECUTABLE=auto` (the default), the backend and scraper detect the packaged executable on Windows as well as 64-bit Raspberry Pi systems. Set an explicit path only when an override is required.
+
+Copy the example configuration and provide your local database credentials:
+
+```bash
+cd ..
+cp .env.example .env
+```
+
+Never commit the resulting `.env` file.
+
+### Run the application
+
+Start the Flask API from `onpoint/`:
+
+```bash
+python backend.py
+```
+
+In another terminal, start the frontend from `onpoint/my-app/`:
+
+```bash
+npm run dev
+```
+
+Vite proxies `/api` requests to the Flask server on `http://localhost:5000`.
+
+## Verification
+
+Run the backend tests from `onpoint/`:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Check and build the frontend from `onpoint/my-app/`:
+
+```bash
+npm run check
+npm run build
+```
 
 ## Historical event storage
 
 Each arrival or departure is identified by:
 
-`event type + internal station id + DB trip id + planned date/time`
+```text
+event type + internal station id + DB trip id + planned date/time
+```
 
-The planned date and time keep repeated runs of the same line separate. A train
-that serves the same route several times on one day therefore creates several
-events. Repeated observations of the same event update its actual time, delay,
-and cancellation state instead of appending duplicate snapshots.
+Repeated observations update the same logical event instead of appending duplicate snapshots. A `realtime_known` quality flag prevents a later plan-only response from overwriting a previously observed realtime delay or cancellation.
 
-The scraper keeps the latest/final historical delay needed by the connection
-model. It does not retain every intermediate prediction for one event.
-
-DB Web sometimes removes realtime information from old trains and returns only
-their planned times. Each observation therefore carries a `realtime_known`
-quality flag. A later plan-only response cannot replace an already stored
-realtime delay or cancellation. A trusted realtime response can still correct
-an earlier prediction, including correcting a delay back to zero.
-
-Run the migration once after updating an existing installation:
+After updating an existing installation, run the idempotent migration once:
 
 ```bash
-cd /home/pi/BahnProjekt/filedforBahnprojekt
+cd /home/pi/BahnProjekt/onpoint
 ../.venv/bin/python migrate_train_db.py
 ```
 
-The migration is idempotent and does not delete old snapshot rows. It assigns
-an event key only to the latest existing row for each logical event.
-
-After a backup, old imported snapshots can be converted physically to one row
-per logical event:
+After creating a backup, old imported snapshots can optionally be compacted:
 
 ```bash
 ../.venv/bin/python compact_train_db.py
 ../.venv/bin/python compact_train_db.py --apply --optimize
 ```
 
-The first command is a dry run. The apply command retains the newest row for
-each station, trip id, planned date, and planned time. Multiple runs of the same
-line remain separate because their planned times differ.
+The first command is a dry run. The apply command retains the newest row for every logical train event.
 
-## Raspberry Pi scraper
+The database account used for the migration requires `ALTER`, `CREATE`, `INDEX`, `SELECT` and `UPDATE` privileges. The regular scraper can use a more restricted read/write account after the migration.
 
-Install the Python and frontend dependencies first. `NODE_EXECUTABLE=auto`
-finds both the Windows npm Bun binary and the Linux/ARM64 npm Bun binary.
+## Raspberry Pi deployment
 
-Typical upgrade sequence:
+A typical update sequence is:
 
 ```bash
 cd /home/pi/BahnProjekt
 git pull
-.venv/bin/pip install -r filedforBahnprojekt/requirements.txt
-cd filedforBahnprojekt/my-app
+.venv/bin/pip install -r onpoint/requirements.txt
+cd onpoint/my-app
 npm ci
 npm run build
 cd ..
 ../.venv/bin/python migrate_train_db.py
 ```
 
-The database account used for the migration needs `ALTER`, `CREATE`, `INDEX`,
-`SELECT`, and `UPDATE` privileges. The regular scraper only needs its normal
-read/write privileges after the migration.
-
-Test the board provider without writing:
+Test the board provider without writing data:
 
 ```bash
 ../.venv/bin/python scrape_train_data.py \
@@ -103,7 +224,7 @@ Test the board provider without writing:
   --dry-run
 ```
 
-Start the continuous scraper:
+Start one continuous scraper process:
 
 ```bash
 ../.venv/bin/python scrape_train_data.py \
@@ -111,7 +232,7 @@ Start the continuous scraper:
   --interval 600
 ```
 
-To run the live and finalization windows immediately during a manual check:
+To check both the live and finalization windows immediately without writing data:
 
 ```bash
 ../.venv/bin/python scrape_train_data.py \
@@ -120,44 +241,17 @@ To run the live and finalization windows immediately during a manual check:
   --dry-run
 ```
 
-The Pi defaults use one persistent Bun process, one station at a time, and
-automatic rate-limit retries. Arrival and departure boards of that station are
-fetched together. Each cycle reads a live 60-minute window beginning 45 minutes
-in the past, so a train is observed repeatedly after its planned time. Every
-third cycle also reads a separate 60-minute finalization
-window beginning three hours in the past. This is necessary because DB Web
-effectively limits one station-board request to about one hour even when a
-larger duration is requested.
+The default configuration uses one persistent Bun process, automatic rate-limit retries, a recurring live window and a separate finalization window for departed trains. Scrape health is recorded once per station request and old health records are removed according to the configured retention period. All values can be adjusted in `.env`; the available settings are documented in [`.env.example`](onpoint/.env.example).
 
-The finalization window lets already departed trains receive their final delay
-or cancellation state without multiplying every cycle into four historical
-requests. These values can be changed in `.env`:
-
-```dotenv
-SCRAPE_WORKERS=1
-SCRAPE_STATION_PAUSE_MS=750
-SCRAPE_RETRY_ATTEMPTS=4
-SCRAPE_LOOKBACK_MINUTES=45
-SCRAPE_DURATION_MINUTES=60
-SCRAPE_RESULTS=120
-SCRAPE_FINALIZE_LOOKBACK_MINUTES=180
-SCRAPE_FINALIZE_EVERY=3
-SCRAPE_RUN_RETENTION_DAYS=30
-```
-
-An example systemd unit is available at
-`filedforBahnprojekt/deploy/onpoint-scraper.service.example`. Adjust its user
-and paths, copy it to `/etc/systemd/system/onpoint-scraper.service`, then run:
+Example services are available in [`onpoint/deploy`](onpoint/deploy). Adjust the user and paths before copying them to `/etc/systemd/system/`.
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now onpoint-scraper
+sudo systemctl enable --now onpoint-backend onpoint-scraper
 ```
 
-A matching one-worker Gunicorn unit is available at
-`filedforBahnprojekt/deploy/onpoint-backend.service.example`.
+## Data sources and limitations
 
-Scrape health is stored once per station request in `scrape_runs`. The old
-per-departure `logs` table is left untouched for compatibility but receives no
-new rows. Health rows older than 30 days are deleted automatically by default.
+OnPoint uses imported historical railway data and current routing information from Deutsche Bahn-compatible providers. Coverage and confidence depend on the stations, trains and time periods available in the local database. Live operational information and ticketing should always be confirmed with the relevant transport provider.
 
+This is an independent personal project and is not affiliated with Deutsche Bahn AG.
