@@ -6,6 +6,10 @@ OnPoint combines current timetable data with historical delays and cancellations
 
 [Live demo](https://bahn.juhermes.de) · [Frontend documentation](onpoint/my-app/README.md)
 
+<img width="1905" height="937" alt="image" src="https://github.com/user-attachments/assets/3c89c53c-d384-4b82-83c3-7eebcccdc02f" />
+
+<img width="1905" height="938" alt="image" src="https://github.com/user-attachments/assets/410608eb-d526-4b58-a61f-d645ab3538b2" />
+
 <!-- Screenshot placeholder
 
 Add a wide screenshot of the route comparison here, for example:
